@@ -3,6 +3,7 @@ const router = express.Router()
 const multer = require('multer')
 const Product = require('../models/Product')
 const { storage } = require('../config/cloudinary')
+const { protect } = require('../middleware/authMiddleware')
 
 const upload = multer({ storage })
 
@@ -30,7 +31,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST a new product
-router.post('/', async (req, res) => {
+router.post('/', protect, async (req, res) => {
   try {
     const newProduct = new Product(req.body)
     const savedProduct = await newProduct.save()
@@ -60,7 +61,7 @@ router.post('/upload-multiple', upload.array('images', 20), (req, res) => {
 })
 
 // PUT (update) an existing product
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, async (req, res) => {
   try {
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
     if (!updatedProduct) {
@@ -73,7 +74,7 @@ router.put('/:id', async (req, res) => {
 })
 
 // DELETE a single product
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, async (req, res) => {
   try {
     const deletedProduct = await Product.findByIdAndDelete(req.params.id)
     if (!deletedProduct) {

@@ -17,7 +17,7 @@ const app = express()
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://lac-supplement-store.vercel.app'
+    'https://your-frontend.vercel.app'
   ]
 }))
 app.use(express.json())

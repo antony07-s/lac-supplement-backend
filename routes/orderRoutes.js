@@ -1,9 +1,10 @@
 const express = require('express')
 const router = express.Router()
 const Order = require('../models/Order')
+const { protect } = require('../middleware/authMiddleware')
 
 // CREATE a new order
-router.post('/', async (req, res) => {
+router.post('/', protect, async (req, res) => {
   try {
     const newOrder = new Order(req.body)
     const savedOrder = await newOrder.save()

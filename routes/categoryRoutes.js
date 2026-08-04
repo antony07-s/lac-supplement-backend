@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const Category = require('../models/Category')
+const { protect } = require('../middleware/authMiddleware')
 
 router.get('/', async (req, res) => {
   try {
@@ -11,7 +12,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-router.post('/', async (req, res) => {
+router.post('/', protect, async (req, res) => {
   try {
     const newCategory = new Category(req.body)
     const saved = await newCategory.save()
@@ -21,7 +22,7 @@ router.post('/', async (req, res) => {
   }
 })
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, async (req, res) => {
   try {
     const updated = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true })
     if (!updated) {
@@ -33,7 +34,7 @@ router.put('/:id', async (req, res) => {
   }
 })
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, async (req, res) => {
   try {
     const deleted = await Category.findByIdAndDelete(req.params.id)
     if (!deleted) {
