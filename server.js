@@ -13,7 +13,13 @@ const orderRoutes = require('./routes/orderRoutes')
 
 const app = express()
 
-app.use(cors())
+// app.use(cors())
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://lac-supplement-store.vercel.app'
+  ]
+}))
 app.use(express.json())
 app.use('/api/categories', categoryRoutes)
 app.use('/api/health-goals', healthGoalRoutes)

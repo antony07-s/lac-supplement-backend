@@ -85,12 +85,4 @@ router.delete('/:id', async (req, res) => {
   }
 })
 
-router.delete('/', async (req, res) => {
-  try {
-    await Product.deleteMany({})
-    res.json({ message: 'All products deleted' })
-  } catch (err) {
-    res.status(500).json({ message: err.message })
-  }
-})
 module.exports = router
