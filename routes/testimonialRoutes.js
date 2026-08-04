@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const Testimonial = require('../models/Testimonial')
-const { protect } = require('../middleware/authMiddleware')
+const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 router.get('/', async (req, res) => {
   try {
@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const newTestimonial = new Testimonial(req.body)
     const saved = await newTestimonial.save()
@@ -22,7 +22,7 @@ router.post('/', protect, async (req, res) => {
   }
 })
 
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const updated = await Testimonial.findByIdAndUpdate(req.params.id, req.body, { new: true })
     if (!updated) {
@@ -34,7 +34,7 @@ router.put('/:id', protect, async (req, res) => {
   }
 })
 
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const deleted = await Testimonial.findByIdAndDelete(req.params.id)
     if (!deleted) {
