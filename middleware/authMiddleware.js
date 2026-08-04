@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
+const User = require('../models/User')
 
-function protect(req, res, next) {
+async function protect(req, res, next) {
   const authHeader = req.headers.authorization
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -18,4 +19,16 @@ function protect(req, res, next) {
   }
 }
 
-module.exports = { protect }
+async function adminOnly(req, res, next) {
+  try {
+    const user = await User.findById(req.userId)
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ message: 'Admin access required' })
+    }
+    next()
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+module.exports = { protect, adminOnly }

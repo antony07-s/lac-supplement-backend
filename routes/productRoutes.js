@@ -3,7 +3,7 @@ const router = express.Router()
 const multer = require('multer')
 const Product = require('../models/Product')
 const { storage } = require('../config/cloudinary')
-const { protect } = require('../middleware/authMiddleware')
+const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 const upload = multer({ storage })
 
@@ -31,7 +31,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST a new product
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const newProduct = new Product(req.body)
     const savedProduct = await newProduct.save()
@@ -42,7 +42,7 @@ router.post('/', protect, async (req, res) => {
 })
 
 // POST an image upload (returns the Cloudinary URL)
-router.post('/upload', upload.single('image'), (req, res) => {
+router.post('/upload', protect, adminOnly, upload.single('image'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' })
   }
@@ -52,7 +52,7 @@ router.post('/upload', upload.single('image'), (req, res) => {
 })
 
 // POST multiple image uploads (returns an array of Cloudinary URLs)
-router.post('/upload-multiple', upload.array('images', 20), (req, res) => {
+router.post('/upload-multiple', protect, adminOnly, upload.array('images', 20), (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ message: 'No files uploaded' })
   }
@@ -61,7 +61,7 @@ router.post('/upload-multiple', upload.array('images', 20), (req, res) => {
 })
 
 // PUT (update) an existing product
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
     if (!updatedProduct) {
@@ -74,7 +74,7 @@ router.put('/:id', protect, async (req, res) => {
 })
 
 // DELETE a single product
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const deletedProduct = await Product.findByIdAndDelete(req.params.id)
     if (!deletedProduct) {
