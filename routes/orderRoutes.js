@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const Order = require('../models/Order')
 const Product = require('../models/Product')
-const { protect } = require('../middleware/authMiddleware')
+const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 // CREATE a new order
 router.post('/', protect, async (req, res) => {
@@ -54,6 +54,34 @@ router.get('/user/:userId', protect, async (req, res) => {
     }
     const orders = await Order.find({ user: req.params.userId }).sort({ createdAt: -1 })
     res.json(orders)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// GET all orders (admin only)
+router.get('/', protect, adminOnly, async (req, res) => {
+  try {
+    const orders = await Order.find().populate('user', 'name email').sort({ createdAt: -1 })
+    res.json(orders)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// UPDATE order status (admin only)
+router.put('/:id/status', protect, adminOnly, async (req, res) => {
+  try {
+    const { status } = req.body
+    const validStatuses = ['pending', 'paid', 'shipped', 'delivered']
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' })
+    }
+    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true })
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' })
+    }
+    res.json(order)
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
