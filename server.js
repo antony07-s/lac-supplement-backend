@@ -10,6 +10,8 @@ const brandRoutes = require('./routes/brandRoutes')
 const testimonialRoutes = require('./routes/testimonialRoutes')
 const authRoutes = require('./routes/authRoutes')
 const orderRoutes = require('./routes/orderRoutes')
+const contactRoutes = require('./routes/contact')
+const newsletterRoutes = require('./routes/newsletter')
 
 const app = express()
 
@@ -26,6 +28,8 @@ app.use('/api/brands', brandRoutes)
 app.use('/api/testimonials', testimonialRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/orders', orderRoutes)
+app.use('/api/contact', contactRoutes)
+app.use('/api/newsletter', newsletterRoutes)
 
 app.get('/', (req, res) => {
   res.send('Ayusydah backend is running')
