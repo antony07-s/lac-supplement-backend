@@ -2,7 +2,15 @@ const nodemailer = require('nodemailer')
 
 const isConfigured = Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS)
 const transporter = isConfigured
-  ? nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } })
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      pool: true,
+      maxConnections: 2,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
+    })
   : null
 
 async function sendNotification({ subject, text, replyTo }) {

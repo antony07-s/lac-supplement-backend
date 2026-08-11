@@ -20,17 +20,16 @@ router.post('/', async (req, res) => {
 
     const saved = await Message.create({ name, email, subject, message, fingerprint })
 
-    await sendNotification({
+    void sendNotification({
       replyTo: email,
       subject: `New contact form message: ${subject || 'No subject'}`,
       text: `From: ${name} (${email})\n\n${message}`,
-    })
+    }).catch((error) => console.error('Contact notification failed:', error.message))
 
     res.status(201).json({ message: 'Message sent', id: saved._id })
   } catch (err) {
-    if (err.code === 'EMAIL_NOT_CONFIGURED') return res.status(503).json({ message: 'Your enquiry was saved, but email notifications are not configured yet' })
-    console.error('Contact notification failed:', err.message)
-    res.status(502).json({ message: 'Your enquiry was saved, but the notification email could not be delivered' })
+    console.error('Contact submission failed:', err.message)
+    res.status(500).json({ message: 'Unable to save your enquiry' })
   }
 })
 

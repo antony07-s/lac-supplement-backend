@@ -17,12 +17,15 @@ router.post('/', async (req, res) => {
     }
 
     if (!subscriber.notificationSentAt) {
-      await sendNotification({
+      void sendNotification({
         subject: `New newsletter subscriber: ${email}`,
         text: `A visitor subscribed to the Ayusydah newsletter.\n\nEmail: ${email}`,
       })
-      subscriber.notificationSentAt = new Date()
-      await subscriber.save()
+        .then(async () => {
+          subscriber.notificationSentAt = new Date()
+          await subscriber.save()
+        })
+        .catch((error) => console.error('Newsletter notification failed:', error.message))
     }
 
     res.status(isNew ? 201 : 200).json({ message: isNew ? 'Subscription confirmed' : 'You are already subscribed' })
@@ -30,11 +33,7 @@ router.post('/', async (req, res) => {
     if (err.code === 11000) {
       return res.status(200).json({ message: 'Already subscribed' })
     }
-    if (err.code === 'EMAIL_NOT_CONFIGURED') {
-      return res.status(503).json({ message: 'Subscription saved, but email notifications are not configured yet' })
-    }
-    console.error('Newsletter notification failed:', err.message)
-    res.status(502).json({ message: 'Subscription saved, but the notification email could not be delivered' })
+    res.status(500).json({ message: 'Unable to save subscription' })
   }
 })
 
