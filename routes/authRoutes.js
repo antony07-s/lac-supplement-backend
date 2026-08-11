@@ -10,8 +10,8 @@ router.post('/register', async (req, res) => {
     const name = String(req.body.name || '').trim()
     const email = String(req.body.email || '').trim().toLowerCase()
     const password = String(req.body.password || '')
-    if (!name || name.length > 100 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 8 || password.length > 128) {
-      return res.status(400).json({ message: 'Enter a valid name, email, and password of at least 8 characters' })
+    if (!name || name.length > 100 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 6 || password.length > 128) {
+      return res.status(400).json({ message: 'Enter a valid name, email, and password of at least 6 characters' })
     }
 
     const existingUser = await User.findOne({ email })
