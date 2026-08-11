@@ -16,6 +16,7 @@ const orderRoutes = require('./routes/orderRoutes')
 const contactRoutes = require('./routes/contact')
 const newsletterRoutes = require('./routes/newsletter')
 const cartRoutes = require('./routes/cartRoutes')
+const wishlistRoutes = require('./routes/wishlistRoutes')
 
 const app = express()
 
@@ -72,6 +73,7 @@ app.use('/api/orders', orderRoutes)
 app.use('/api/contact', contactRoutes)
 app.use('/api/newsletter', newsletterRoutes)
 app.use('/api/cart', cartRoutes)
+app.use('/api/wishlist', wishlistRoutes)
 
 app.get('/', (req, res) => {
   res.json({ service: 'ayusydah-api', status: 'ok' })
