@@ -2,11 +2,19 @@ const express = require('express')
 const router = express.Router()
 const Category = require('../models/Category')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
+const { canonicalCategory } = require('../config/categories')
 
 router.get('/', async (req, res) => {
   try {
-    const categories = await Category.find()
-    res.json(categories)
+    const categories = await Category.find().lean()
+    const seen = new Set()
+    res.json(categories.filter((category) => {
+      const name = canonicalCategory(category.name)
+      if (seen.has(name)) return false
+      seen.add(name)
+      category.name = name
+      return true
+    }))
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

@@ -6,43 +6,68 @@ const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 // CREATE a new order
 router.post('/', protect, async (req, res) => {
+  const clientRequestId = String(req.get('Idempotency-Key') || '').trim()
+  if (!clientRequestId || clientRequestId.length > 100) {
+    return res.status(400).json({ message: 'A valid Idempotency-Key is required' })
+  }
+
+  const session = await Order.startSession()
   try {
     const { items } = req.body
 
-    if (!items || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
       return res.status(400).json({ message: 'No items in order' })
     }
 
-    let totalAmount = 0
-    const verifiedItems = []
-
-    for (const item of items) {
-      const product = await Product.findById(item.product)
-      if (!product) {
-        return res.status(400).json({ message: `Product not found: ${item.product}` })
+    let savedOrder
+    let wasDuplicate = false
+    await session.withTransaction(async () => {
+      const existing = await Order.findOne({ clientRequestId }).session(session)
+      if (existing) {
+        savedOrder = existing
+        wasDuplicate = true
+        return
       }
 
-      const itemTotal = product.price * item.quantity
-      totalAmount += itemTotal
+      let totalAmount = 0
+      const verifiedItems = []
 
-      verifiedItems.push({
-        product: product._id,
-        name: product.name,
-        price: product.price,
-        quantity: item.quantity,
-      })
-    }
+      for (const item of items) {
+        const quantity = Number(item.quantity)
+        if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) {
+          throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
+        }
+        const product = await Product.findById(item.product).session(session)
+        if (!product) throw Object.assign(new Error('A product in the order was not found'), { status: 400 })
 
-    const newOrder = new Order({
-      user: req.userId,
-      items: verifiedItems,
-      totalAmount,
+        if (product.stock !== undefined && product.stock < quantity) {
+          throw Object.assign(new Error(`${product.name} does not have enough stock`), { status: 409 })
+        }
+        if (product.stock !== undefined) {
+          product.stock -= quantity
+          await product.save({ session })
+        }
+
+        totalAmount += product.price * quantity
+        verifiedItems.push({ product: product._id, name: product.name, price: product.price, quantity })
+      }
+
+      ;[savedOrder] = await Order.create([{
+        user: req.userId,
+        items: verifiedItems,
+        totalAmount,
+        clientRequestId,
+      }], { session })
     })
-
-    const savedOrder = await newOrder.save()
-    res.status(201).json(savedOrder)
+    res.status(wasDuplicate ? 200 : 201).json(savedOrder)
   } catch (err) {
-    res.status(400).json({ message: err.message })
+    if (err.code === 11000) {
+      const existing = await Order.findOne({ clientRequestId })
+      if (existing) return res.status(200).json(existing)
+    }
+    res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to place order' })
+  } finally {
+    await session.endSession()
   }
 })
 
@@ -52,7 +77,7 @@ router.get('/user/:userId', protect, async (req, res) => {
     if (req.userId !== req.params.userId) {
       return res.status(403).json({ message: 'Not authorized to view these orders' })
     }
-    const orders = await Order.find({ user: req.params.userId }).sort({ createdAt: -1 })
+    const orders = await Order.find({ user: req.params.userId }).sort({ createdAt: -1 }).lean()
     res.json(orders)
   } catch (err) {
     res.status(500).json({ message: err.message })

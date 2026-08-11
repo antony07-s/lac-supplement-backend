@@ -10,8 +10,11 @@ const orderSchema = new mongoose.Schema({
             quantity: { type: Number, required: true },
         },
     ],
-    totalAmount: { type: Number, required: true },
+    totalAmount: { type: Number, required: true, min: 0 },
+    clientRequestId: { type: String, trim: true, maxlength: 100, unique: true, sparse: true },
     status: { type: String, enum: ['pending', 'paid', 'shipped', 'delivered'], default: 'pending' },
 }, { timestamps: true })
+
+orderSchema.index({ user: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Order', orderSchema)

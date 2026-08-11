@@ -7,7 +7,12 @@ const User = require('../models/User')
 // REGISTER
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body
+    const name = String(req.body.name || '').trim()
+    const email = String(req.body.email || '').trim().toLowerCase()
+    const password = String(req.body.password || '')
+    if (!name || name.length > 100 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 8 || password.length > 128) {
+      return res.status(400).json({ message: 'Enter a valid name, email, and password of at least 8 characters' })
+    }
 
     const existingUser = await User.findOne({ email })
     if (existingUser) {
@@ -26,16 +31,19 @@ router.post('/register', async (req, res) => {
       user: { id: newUser._id, name: newUser.name, email: newUser.email, isAdmin: newUser.isAdmin },
     })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    if (err.code === 11000) return res.status(400).json({ message: 'Email already registered' })
+    res.status(500).json({ message: 'Unable to register account' })
   }
 })
 
 // LOGIN
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body
+    const email = String(req.body.email || '').trim().toLowerCase()
+    const password = String(req.body.password || '')
+    if (!email || !password) return res.status(400).json({ message: 'Invalid email or password' })
 
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email }).select('+password')
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' })
     }
@@ -52,7 +60,7 @@ router.post('/login', async (req, res) => {
   user: { id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin },
 })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to sign in' })
   }
 })
 
