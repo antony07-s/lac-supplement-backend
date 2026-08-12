@@ -1,3 +1,6 @@
+const dns = require('dns')
+dns.setDefaultResultOrder('ipv4first')
+
 require('dotenv').config()
 
 const express = require('express')
@@ -48,15 +51,13 @@ app.use((req, res, next) => {
   next()
 })
 
-// General rate limit: applies to all API routes
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 300,
   message: { message: 'Too many requests, please try again later.' },
 })
 app.use('/api', generalLimiter)
 
-// Stricter limit for auth routes (prevents brute-force login attempts)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
