@@ -3,7 +3,10 @@ const nodemailer = require('nodemailer')
 const isConfigured = Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS)
 const transporter = isConfigured
   ? nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      family: 4, // force IPv4 - Render's IPv6 route to Gmail is unreachable
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
       pool: true,
       maxConnections: 2,

@@ -25,7 +25,7 @@ router.put('/', protect, async (req, res) => {
     const cart = await Cart.findOneAndUpdate(
       { user: req.userId },
       { items: formattedItems },
-      { new: true, upsert: true }
+      { returnDocument: 'after', upsert: true }
     ).populate('items.product')
 
     res.json(cart.items.map((item) => ({ ...item.product.toObject(), quantity: item.quantity })))

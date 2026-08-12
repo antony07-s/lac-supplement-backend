@@ -22,7 +22,7 @@ router.put('/', protect, async (req, res) => {
     const wishlist = await Wishlist.findOneAndUpdate(
       { user: req.userId },
       { products: productIds },
-      { new: true, upsert: true }
+      { returnDocument: 'after', upsert: true }
     ).populate('products')
 
     res.json(wishlist.products)
