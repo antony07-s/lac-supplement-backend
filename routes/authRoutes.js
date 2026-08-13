@@ -4,14 +4,29 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const namePattern = /^(?=.{2,100}$)[\p{L}][\p{L}\p{M}' -]*$/u
+const isStrongPassword = (password) => password.length >= 8
+  && password.length <= 128
+  && /[a-z]/.test(password)
+  && /[A-Z]/.test(password)
+  && /\d/.test(password)
+  && /[^A-Za-z0-9]/.test(password)
+
 // REGISTER
 router.post('/register', async (req, res) => {
   try {
     const name = String(req.body.name || '').trim()
     const email = String(req.body.email || '').trim().toLowerCase()
     const password = String(req.body.password || '')
-    if (!name || name.length > 100 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 6 || password.length > 128) {
-      return res.status(400).json({ message: 'Enter a valid name, email, and password of at least 6 characters' })
+    if (!namePattern.test(name)) {
+      return res.status(400).json({ message: 'Enter a name between 2 and 100 characters using letters, spaces, hyphens, or apostrophes' })
+    }
+    if (!emailPattern.test(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({ message: 'Password must be 8–128 characters and include uppercase, lowercase, a number, and a symbol' })
     }
 
     const existingUser = await User.findOne({ email })
@@ -19,7 +34,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' })
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10)
+    const hashedPassword = await bcrypt.hash(password, 12)
 
     const newUser = new User({ name, email, password: hashedPassword })
     await newUser.save()
@@ -41,7 +56,7 @@ router.post('/login', async (req, res) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase()
     const password = String(req.body.password || '')
-    if (!email || !password) return res.status(400).json({ message: 'Invalid email or password' })
+    if (!emailPattern.test(email) || !password || password.length > 128) return res.status(400).json({ message: 'Invalid email or password' })
 
     const user = await User.findOne({ email }).select('+password')
     if (!user) {

@@ -1,7 +1,9 @@
 const express = require('express')
 const router = express.Router()
+const mongoose = require('mongoose')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
+const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 // CREATE a new order
@@ -88,6 +90,24 @@ router.get('/user/:userId', protect, async (req, res) => {
     res.json(orders)
   } catch (err) {
     res.status(500).json({ message: err.message })
+  }
+})
+
+// GET a single order for its owner (or an administrator)
+router.get('/:id', protect, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid order ID' })
+    }
+    const order = await Order.findById(req.params.id).lean()
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (String(order.user) !== req.userId) {
+      const requester = await User.findById(req.userId).select('isAdmin').lean()
+      if (!requester?.isAdmin) return res.status(403).json({ message: 'Not authorized to view this order' })
+    }
+    res.json(order)
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to load order' })
   }
 })
 
