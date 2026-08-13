@@ -13,10 +13,16 @@ router.post('/', protect, async (req, res) => {
 
   const session = await Order.startSession()
   try {
-    const { items } = req.body
+    const { items, shippingAddress } = req.body
 
     if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
       return res.status(400).json({ message: 'No items in order' })
+    }
+
+    const requiredAddressFields = ['fullName', 'phone', 'addressLine1', 'city', 'state', 'postcode']
+    const missingField = requiredAddressFields.find((field) => !shippingAddress?.[field]?.trim())
+    if (missingField) {
+      return res.status(400).json({ message: `Shipping address is missing: ${missingField}` })
     }
 
     let savedOrder
@@ -55,6 +61,7 @@ router.post('/', protect, async (req, res) => {
       ;[savedOrder] = await Order.create([{
         user: req.userId,
         items: verifiedItems,
+        shippingAddress,
         totalAmount,
         clientRequestId,
       }], { session })
