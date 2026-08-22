@@ -27,6 +27,18 @@ const productPayload = (body) => ({
   description: String(body.description || '').trim(),
   category: canonicalCategory(body.category),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
+  ...(Array.isArray(body.variants) && {
+    variants: body.variants.map((variant) => ({
+      ...(variant._id && { _id: variant._id }),
+      packSize: String(variant.packSize || '').trim(),
+      price: Number(variant.price),
+      originalPrice: variant.originalPrice === '' || variant.originalPrice === undefined ? Number(variant.price) : Number(variant.originalPrice),
+      sku: String(variant.sku || '').trim(),
+      stock: Number(variant.stock),
+      image: String(variant.image || '').trim(),
+      isAvailable: variant.isAvailable !== false,
+    })),
+  }),
 })
 
 // GET all products

@@ -47,17 +47,31 @@ router.post('/', protect, async (req, res) => {
         }
         const product = await Product.findById(item.product).session(session)
         if (!product) throw Object.assign(new Error('A product in the order was not found'), { status: 400 })
+        const variantId = item.variant || item.variantId
+        const variant = variantId ? product.variants.id(variantId) : null
+        if (variantId && !variant) throw Object.assign(new Error(`Selected option for ${product.name} is no longer available`), { status: 409 })
 
-        if (product.stock !== undefined && product.stock < quantity) {
+        const sellable = variant || product
+        const stock = sellable.stock
+        if (variant && (!variant.isAvailable || stock < quantity)) {
+          throw Object.assign(new Error(`${product.name} — ${variant.packSize} is unavailable`), { status: 409 })
+        }
+        if (!variant && stock !== undefined && stock < quantity) {
           throw Object.assign(new Error(`${product.name} does not have enough stock`), { status: 409 })
         }
-        if (product.stock !== undefined) {
-          product.stock -= quantity
+        if (stock !== undefined) {
+          sellable.stock -= quantity
           await product.save({ session })
         }
 
-        totalAmount += product.price * quantity
-        verifiedItems.push({ product: product._id, name: product.name, price: product.price, quantity })
+        totalAmount += sellable.price * quantity
+        verifiedItems.push({
+          product: product._id,
+          ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }),
+          name: product.name,
+          price: sellable.price,
+          quantity,
+        })
       }
 
       ;[savedOrder] = await Order.create([{

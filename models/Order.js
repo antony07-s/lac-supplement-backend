@@ -5,7 +5,11 @@ const orderSchema = new mongoose.Schema({
     items: [
         {
             product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+            variant: { type: mongoose.Schema.Types.ObjectId },
             name: { type: String, required: true },
+            packSize: { type: String, trim: true },
+            sku: { type: String, trim: true },
+            image: { type: String, trim: true },
             price: { type: Number, required: true },
             quantity: { type: Number, required: true },
         },
