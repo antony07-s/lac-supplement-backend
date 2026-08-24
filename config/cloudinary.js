@@ -19,4 +19,14 @@ const storage = new CloudinaryStorage({
   },
 })
 
-module.exports = { cloudinary, storage }
+const videoStorage = new CloudinaryStorage({
+  cloudinary,
+  params: (req, file) => ({
+    folder: 'ayusydah-products/videos',
+    resource_type: 'video',
+    allowed_formats: ['mp4', 'webm', 'mov'],
+    public_id: file.originalname.replace(/\.[^/.]+$/, ''),
+  }),
+})
+
+module.exports = { cloudinary, storage, videoStorage }

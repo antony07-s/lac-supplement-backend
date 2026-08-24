@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const multer = require('multer')
 const Product = require('../models/Product')
-const { storage } = require('../config/cloudinary')
+const { storage, videoStorage } = require('../config/cloudinary')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { canonicalCategory, categoryValues } = require('../config/categories')
 
@@ -13,6 +13,27 @@ const upload = multer({
     callback(null, /^image\/(jpeg|png|webp)$/.test(file.mimetype))
   },
 })
+const uploadVideo = multer({
+  storage: videoStorage,
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, callback) => callback(null, /^video\/(mp4|webm|quicktime)$/.test(file.mimetype)),
+})
+
+const cleanLines = (value, limit = 20) => Array.isArray(value)
+  ? value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, limit)
+  : []
+
+const videoUrl = (value) => {
+  const url = String(value || '').trim()
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') throw new Error('Only HTTPS video URLs are allowed')
+    return parsed.href
+  } catch {
+    throw Object.assign(new Error('Invalid video URL'), { status: 400 })
+  }
+}
 
 const serializeProduct = (product) => ({
   ...product.toObject(),
@@ -25,6 +46,13 @@ const productPayload = (body) => ({
   originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? Number(body.price) : Number(body.originalPrice),
   image: String(body.image || '').trim(),
   description: String(body.description || '').trim(),
+  botanicalName: String(body.botanicalName || '').trim(),
+  keyBenefits: cleanLines(body.keyBenefits),
+  whyChoose: String(body.whyChoose || '').trim(),
+  suitableFor: String(body.suitableFor || '').trim(),
+  suggestedUse: String(body.suggestedUse || '').trim(),
+  disclaimer: String(body.disclaimer || '').trim(),
+  videoUrl: videoUrl(body.videoUrl),
   category: canonicalCategory(body.category),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
   ...(Array.isArray(body.variants) && {
@@ -103,6 +131,13 @@ router.post('/upload-multiple', protect, adminOnly, upload.array('images', 20), 
   }
   const imageUrls = req.files.map((file) => file.path)
   res.json({ imageUrls })
+})
+
+router.post('/upload-video', protect, adminOnly, uploadVideo.single('video'), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No video uploaded' })
+  res.json({ videoUrl: req.file.path })
+}, (err, req, res, next) => {
+  res.status(400).json({ message: err.message || 'Video upload failed' })
 })
 
 // PUT (update) an existing product
