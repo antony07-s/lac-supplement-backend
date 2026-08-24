@@ -19,10 +19,6 @@ const uploadVideo = multer({
   fileFilter: (req, file, callback) => callback(null, /^video\/(mp4|webm|quicktime)$/.test(file.mimetype)),
 })
 
-const cleanLines = (value, limit = 20) => Array.isArray(value)
-  ? value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, limit)
-  : []
-
 const videoUrl = (value) => {
   const url = String(value || '').trim()
   if (!url) return ''
@@ -46,12 +42,6 @@ const productPayload = (body) => ({
   originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? Number(body.price) : Number(body.originalPrice),
   image: String(body.image || '').trim(),
   description: String(body.description || '').trim(),
-  botanicalName: String(body.botanicalName || '').trim(),
-  keyBenefits: cleanLines(body.keyBenefits),
-  whyChoose: String(body.whyChoose || '').trim(),
-  suitableFor: String(body.suitableFor || '').trim(),
-  suggestedUse: String(body.suggestedUse || '').trim(),
-  disclaimer: String(body.disclaimer || '').trim(),
   videoUrl: videoUrl(body.videoUrl),
   category: canonicalCategory(body.category),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
