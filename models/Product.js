@@ -20,6 +20,7 @@ const productSchema = new mongoose.Schema({
   stock: { type: Number, min: 0 },
   description: { type: String, trim: true, maxlength: 5000 },
   videoUrl: { type: String, trim: true, maxlength: 2048 },
+  videoPublicId: { type: String, trim: true, maxlength: 500 },
   category: { type: String, required: true, trim: true, index: true },
   variants: { type: [variantSchema], default: [] },
 }, { timestamps: true })

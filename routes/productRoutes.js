@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const multer = require('multer')
 const Product = require('../models/Product')
-const { storage, videoStorage } = require('../config/cloudinary')
+const { cloudinary, storage, videoStorage } = require('../config/cloudinary')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { canonicalCategory, categoryValues } = require('../config/categories')
 
@@ -31,6 +31,13 @@ const videoUrl = (value) => {
   }
 }
 
+const requiredNumber = (value, field) => {
+  if (value === '' || value === undefined || value === null) throw Object.assign(new Error(`${field} is required`), { status: 400 })
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) throw Object.assign(new Error(`${field} must be a non-negative number`), { status: 400 })
+  return number
+}
+
 const serializeProduct = (product) => ({
   ...product.toObject(),
   category: canonicalCategory(product.category),
@@ -38,21 +45,22 @@ const serializeProduct = (product) => ({
 
 const productPayload = (body) => ({
   name: String(body.name || '').trim(),
-  price: Number(body.price),
-  originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? Number(body.price) : Number(body.originalPrice),
+  price: requiredNumber(body.price, 'Price'),
+  originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? requiredNumber(body.price, 'Price') : requiredNumber(body.originalPrice, 'Original price'),
   image: String(body.image || '').trim(),
   description: String(body.description || '').trim(),
   videoUrl: videoUrl(body.videoUrl),
+  videoPublicId: String(body.videoPublicId || '').trim(),
   category: canonicalCategory(body.category),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
   ...(Array.isArray(body.variants) && {
     variants: body.variants.map((variant) => ({
       ...(variant._id && { _id: variant._id }),
       packSize: String(variant.packSize || '').trim(),
-      price: Number(variant.price),
-      originalPrice: variant.originalPrice === '' || variant.originalPrice === undefined ? Number(variant.price) : Number(variant.originalPrice),
+      price: requiredNumber(variant.price, 'Variant price'),
+      originalPrice: variant.originalPrice === '' || variant.originalPrice === undefined ? requiredNumber(variant.price, 'Variant price') : requiredNumber(variant.originalPrice, 'Variant original price'),
       sku: String(variant.sku || '').trim(),
-      stock: Number(variant.stock),
+      stock: requiredNumber(variant.stock, 'Variant stock'),
       image: String(variant.image || '').trim(),
       isAvailable: variant.isAvailable !== false,
     })),
@@ -125,7 +133,7 @@ router.post('/upload-multiple', protect, adminOnly, upload.array('images', 20), 
 
 router.post('/upload-video', protect, adminOnly, uploadVideo.single('video'), (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No video uploaded' })
-  res.json({ videoUrl: req.file.path })
+  res.json({ videoUrl: req.file.path, videoPublicId: req.file.filename || req.file.public_id || '' })
 }, (err, req, res, next) => {
   res.status(400).json({ message: err.message || 'Video upload failed' })
 })
@@ -133,9 +141,18 @@ router.post('/upload-video', protect, adminOnly, uploadVideo.single('video'), (r
 // PUT (update) an existing product
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, productPayload(req.body), { new: true, runValidators: true })
-    if (!updatedProduct) {
+    const existingProduct = await Product.findById(req.params.id)
+    if (!existingProduct) {
       return res.status(404).json({ message: 'Product not found' })
+    }
+    const payload = productPayload(req.body)
+    const previousVideoPublicId = existingProduct.videoPublicId
+    existingProduct.set(payload)
+    const updatedProduct = await existingProduct.save()
+    if (previousVideoPublicId && previousVideoPublicId !== updatedProduct.videoPublicId) {
+      cloudinary.uploader.destroy(previousVideoPublicId, { resource_type: 'video', invalidate: true }).catch((error) => {
+        console.error('Unable to remove replaced product video from Cloudinary:', error.message)
+      })
     }
     res.json(serializeProduct(updatedProduct))
   } catch (err) {
@@ -149,6 +166,11 @@ router.delete('/:id', protect, adminOnly, async (req, res, next) => {
     const deletedProduct = await Product.findByIdAndDelete(req.params.id)
     if (!deletedProduct) {
       return res.status(404).json({ message: 'Product not found' })
+    }
+    if (deletedProduct.videoPublicId) {
+      cloudinary.uploader.destroy(deletedProduct.videoPublicId, { resource_type: 'video', invalidate: true }).catch((error) => {
+        console.error('Unable to remove deleted product video from Cloudinary:', error.message)
+      })
     }
     res.json({ message: 'Product deleted', deletedProduct })
   } catch (err) {
