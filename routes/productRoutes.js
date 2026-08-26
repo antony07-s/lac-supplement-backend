@@ -52,6 +52,9 @@ const productPayload = (body) => ({
   videoUrl: videoUrl(body.videoUrl),
   videoPublicId: String(body.videoPublicId || '').trim(),
   category: canonicalCategory(body.category),
+  healthGoals: [...new Set((Array.isArray(body.healthGoals) ? body.healthGoals : [])
+    .map((goal) => String(goal || '').trim())
+    .filter(Boolean))].slice(0, 8),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
   ...(Array.isArray(body.variants) && {
     variants: body.variants.map((variant) => ({
@@ -74,6 +77,7 @@ router.get('/', async (req, res, next) => {
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20))
     const query = {}
     if (req.query.category) query.category = { $in: categoryValues(req.query.category) }
+    if (req.query.healthGoal) query.healthGoals = String(req.query.healthGoal).trim()
     if (req.query.search) {
       const term = String(req.query.search).trim().slice(0, 100)
       if (term) query.$or = [{ name: { $regex: term, $options: 'i' } }, { description: { $regex: term, $options: 'i' } }]

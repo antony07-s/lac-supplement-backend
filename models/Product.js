@@ -22,9 +22,12 @@ const productSchema = new mongoose.Schema({
   videoUrl: { type: String, trim: true, maxlength: 2048 },
   videoPublicId: { type: String, trim: true, maxlength: 500 },
   category: { type: String, required: true, trim: true, index: true },
+  // Curated customer-facing wellness collections. A product may support more than one goal.
+  healthGoals: { type: [{ type: String, trim: true, maxlength: 100 }], default: [], index: true },
   variants: { type: [variantSchema], default: [] },
 }, { timestamps: true })
 
 productSchema.index({ category: 1, createdAt: -1 })
+productSchema.index({ healthGoals: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Product', productSchema)
