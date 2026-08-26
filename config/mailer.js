@@ -34,7 +34,7 @@
 // module.exports = { sendNotification, isConfigured }
 
 
-async function sendNotification({ subject, text, replyTo }) {
+async function sendNotification({ subject, text, replyTo, to }) {
   if (!process.env.RESEND_API_KEY) {
     const error = new Error('Email service is not configured')
     error.code = 'EMAIL_NOT_CONFIGURED'
@@ -49,7 +49,7 @@ async function sendNotification({ subject, text, replyTo }) {
     },
     body: JSON.stringify({
       from: process.env.EMAIL_FROM || 'Ayusydah <onboarding@resend.dev>',
-      to: process.env.CONTACT_RECIPIENT || 'antony.s8637@gmail.com',
+      to: to || process.env.CONTACT_RECIPIENT || 'antony.s8637@gmail.com',
       subject,
       text,
       reply_to: replyTo,

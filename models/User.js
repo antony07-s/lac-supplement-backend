@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema({
     match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please provide a valid email address'],
   },
   password: { type: String, required: true, select: false, minlength: 8, maxlength: 128 },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   isAdmin: { type: Boolean, default: false },
 }, { timestamps: true })
 
