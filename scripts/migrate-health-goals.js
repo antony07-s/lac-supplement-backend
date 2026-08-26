@@ -3,6 +3,7 @@ const mongoose = require('mongoose')
 const Product = require('../models/Product')
 const HealthGoal = require('../models/HealthGoal')
 const Category = require('../models/Category')
+const Review = require('../models/Review')
 
 const GOALS = [
   'Bones & Joints', 'Digestive Health', 'Heart Health', 'Immune Support',
@@ -91,6 +92,18 @@ async function run() {
 
   // Fix the malformed duplicated Ayurveda image URL already in the live category data.
   await Category.updateOne({ name: 'Ayurveda' }, { $set: { image: 'https://images.unsplash.com/photo-1492552181161-62217fc3076d?auto=format&fit=crop&w=800&q=80' } })
+
+  // Remove legacy/manual ratings. Only approved customer reviews may determine these fields.
+  const products = await Product.find().select('_id').lean()
+  for (const product of products) {
+    const [summary] = await Review.aggregate([
+      { $match: { product: product._id, status: 'approved' } },
+      { $group: { _id: null, rating: { $avg: '$rating' }, reviews: { $sum: 1 } } },
+    ])
+    await Product.updateOne({ _id: product._id }, {
+      $set: { rating: summary ? Math.round(summary.rating * 10) / 10 : 0, reviews: summary?.reviews || 0 },
+    })
+  }
   const uncategorized = await Product.countDocuments({ healthGoals: { $exists: false } })
   console.log(`Migration complete. Products without a healthGoals field: ${uncategorized}`)
   await mongoose.disconnect()
