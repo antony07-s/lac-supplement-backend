@@ -3,6 +3,7 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
+const https = require('https')
 const User = require('../models/User')
 const { sendNotification } = require('../config/mailer')
 
@@ -14,6 +15,50 @@ const isStrongPassword = (password) => password.length >= 8
   && /[A-Z]/.test(password)
   && /\d/.test(password)
   && /[^A-Za-z0-9]/.test(password)
+const adminEmails = new Set(['antony.s8637@gmail.com', 'lsmu@hotmail.com'])
+const createToken = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
+const userResponse = (user) => ({ id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin })
+let googleKeys = null
+let googleKeysExpiresAt = 0
+
+function getGoogleKeys() {
+  if (googleKeys && Date.now() < googleKeysExpiresAt) return Promise.resolve(googleKeys)
+  return new Promise((resolve, reject) => {
+    https.get('https://www.googleapis.com/oauth2/v3/certs', (response) => {
+      let body = ''
+      response.on('data', (chunk) => { body += chunk })
+      response.on('end', () => {
+        try {
+          if (response.statusCode !== 200) throw new Error('Unable to retrieve Google signing keys')
+          googleKeys = JSON.parse(body).keys || []
+          googleKeysExpiresAt = Date.now() + 60 * 60 * 1000
+          resolve(googleKeys)
+        } catch (error) { reject(error) }
+      })
+    }).on('error', reject)
+  })
+}
+
+async function verifyGoogleCredential(credential) {
+  const [encodedHeader, encodedPayload, encodedSignature] = credential.split('.')
+  if (!encodedHeader || !encodedPayload || !encodedSignature) throw new Error('Invalid Google credential')
+  const header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'))
+  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'))
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('Invalid Google credential')
+  const key = (await getGoogleKeys()).find((candidate) => candidate.kid === header.kid)
+  if (!key || !crypto.verify('RSA-SHA256', Buffer.from(`${encodedHeader}.${encodedPayload}`), crypto.createPublicKey({ key, format: 'jwk' }), Buffer.from(encodedSignature, 'base64url'))) throw new Error('Invalid Google credential')
+  const now = Math.floor(Date.now() / 1000)
+  if (payload.aud !== process.env.GOOGLE_CLIENT_ID || payload.exp <= now || payload.iat > now + 60 || !['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)) throw new Error('Invalid Google credential')
+  return payload
+}
+
+async function applyAdminRole(user) {
+  if (adminEmails.has(user.email) && !user.isAdmin) {
+    user.isAdmin = true
+    await user.save({ validateBeforeSave: false })
+  }
+  return user
+}
 
 // REGISTER
 router.post('/register', async (req, res) => {
@@ -38,14 +83,14 @@ router.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 12)
 
-    const newUser = new User({ name, email, password: hashedPassword })
+    const newUser = new User({ name, email, password: hashedPassword, isAdmin: adminEmails.has(email) })
     await newUser.save()
 
-    const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
+    const token = createToken(newUser)
 
     res.status(201).json({
       token,
-      user: { id: newUser._id, name: newUser.name, email: newUser.email, isAdmin: newUser.isAdmin },
+      user: userResponse(newUser),
     })
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ message: 'Email already registered' })
@@ -61,7 +106,7 @@ router.post('/login', async (req, res) => {
     if (!emailPattern.test(email) || !password || password.length > 128) return res.status(400).json({ message: 'Invalid email or password' })
 
     const user = await User.findOne({ email }).select('+password')
-    if (!user) {
+    if (!user || !user.password) {
       return res.status(400).json({ message: 'Invalid email or password' })
     }
 
@@ -70,11 +115,12 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' })
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
+    await applyAdminRole(user)
+    const token = createToken(user)
 
     res.json({
   token,
-  user: { id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin },
+  user: userResponse(user),
 })
 
 // Request a reset link. The response is deliberately the same for all email addresses.
@@ -107,6 +153,34 @@ router.post('/forgot-password', async (req, res) => {
     res.json({ message: 'If an account exists for that email, a reset link has been sent.' })
   } catch (err) {
     res.status(500).json({ message: 'Unable to request a password reset' })
+  }
+})
+
+// Google issues the identity token; it is verified server-side before any account is created or linked.
+router.post('/google', async (req, res) => {
+  const credential = String(req.body.credential || '')
+  if (!credential) return res.status(400).json({ message: 'Google sign-in could not be completed. Please try again.' })
+  if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).json({ message: 'Google sign-in is not configured yet.' })
+  try {
+    const payload = await verifyGoogleCredential(credential)
+    const email = String(payload?.email || '').trim().toLowerCase()
+    const googleId = String(payload?.sub || '')
+    const name = String(payload?.name || email.split('@')[0]).trim().slice(0, 100)
+    if (!payload?.email_verified || !emailPattern.test(email) || !googleId) return res.status(401).json({ message: 'Your Google account email could not be verified.' })
+
+    const googleUser = await User.findOne({ googleId }).select('+googleId')
+    let user = await User.findOne({ email }).select('+googleId')
+    if (googleUser && user && String(googleUser._id) !== String(user._id)) return res.status(409).json({ message: 'This Google account is already linked to another user.' })
+    user = googleUser || user
+    if (!user) user = new User({ name: name || 'Google user', email, googleId, isAdmin: adminEmails.has(email) })
+    else if (!user.googleId) user.googleId = googleId
+    await applyAdminRole(user)
+    await user.save()
+
+    res.json({ token: createToken(user), user: userResponse(user) })
+  } catch (err) {
+    if (err?.code === 11000) return res.status(409).json({ message: 'This Google account is already linked to another user.' })
+    return res.status(401).json({ message: 'Google sign-in failed. Please try again.' })
   }
 })
 

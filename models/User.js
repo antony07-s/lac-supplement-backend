@@ -12,7 +12,8 @@ const userSchema = new mongoose.Schema({
     maxlength: 254,
     match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please provide a valid email address'],
   },
-  password: { type: String, required: true, select: false, minlength: 8, maxlength: 128 },
+  password: { type: String, required: function passwordRequired() { return !this.googleId }, select: false, minlength: 8, maxlength: 128 },
+  googleId: { type: String, unique: true, sparse: true, select: false },
   resetPasswordToken: { type: String, select: false },
   resetPasswordExpires: { type: Date, select: false },
   isAdmin: { type: Boolean, default: false },
@@ -21,7 +22,7 @@ const userSchema = new mongoose.Schema({
 // Registration hashes explicitly, and this guard also prevents future code paths
 // from accidentally persisting a raw password.
 userSchema.pre('save', async function hashPassword() {
-  if (!this.isModified('password') || /^\$2[aby]\$\d{2}\$/.test(this.password)) return
+  if (!this.password || !this.isModified('password') || /^\$2[aby]\$\d{2}\$/.test(this.password)) return
   this.password = await bcrypt.hash(this.password, 12)
 })
 
