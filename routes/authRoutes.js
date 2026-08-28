@@ -119,8 +119,12 @@ router.post('/login', async (req, res) => {
     const token = createToken(user)
 
     res.json({
-  token,
-  user: userResponse(user),
+      token,
+      user: userResponse(user),
+    })
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to sign in' })
+  }
 })
 
 // Request a reset link. The response is deliberately the same for all email addresses.
@@ -198,10 +202,6 @@ router.post('/reset-password/:token', async (req, res) => {
     res.json({ message: 'Password reset successfully. You can now sign in.' })
   } catch (err) {
     res.status(500).json({ message: 'Unable to reset password' })
-  }
-})
-  } catch (err) {
-    res.status(500).json({ message: 'Unable to sign in' })
   }
 })
 
