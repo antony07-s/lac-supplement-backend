@@ -1,10 +1,12 @@
 const express = require('express')
+const rateLimit = require('express-rate-limit')
 const router = express.Router()
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
 const https = require('https')
 const User = require('../models/User')
+const RegistrationOtp = require('../models/RegistrationOtp')
 const { sendNotification } = require('../config/mailer')
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -18,6 +20,9 @@ const isStrongPassword = (password) => password.length >= 8
 const adminEmails = new Set(['antony.s8637@gmail.com', 'lsmu@hotmail.com'])
 const createToken = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
 const userResponse = (user) => ({ id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin })
+const otpHash = (code) => crypto.createHash('sha256').update(code).digest('hex')
+const registrationOtpLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification codes requested. Please try again in 15 minutes.' } })
+const registrationVerifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification attempts. Please request a new code later.' } })
 let googleKeys = null
 let googleKeysExpiresAt = 0
 
@@ -60,41 +65,47 @@ async function applyAdminRole(user) {
   return user
 }
 
-// REGISTER
-router.post('/register', async (req, res) => {
+// Email verification is required before a password account is created.
+router.post('/register/request-otp', registrationOtpLimiter, async (req, res) => {
+  const name = String(req.body.name || '').trim()
+  const email = String(req.body.email || '').trim().toLowerCase()
+  const password = String(req.body.password || '')
+  if (!namePattern.test(name)) return res.status(400).json({ message: 'Enter a valid name using letters, spaces, hyphens, or apostrophes.' })
+  if (!emailPattern.test(email)) return res.status(400).json({ message: 'Enter a valid email address.' })
+  if (!isStrongPassword(password)) return res.status(400).json({ message: 'Use 8–128 characters with uppercase, lowercase, a number, and a symbol.' })
   try {
-    const name = String(req.body.name || '').trim()
-    const email = String(req.body.email || '').trim().toLowerCase()
-    const password = String(req.body.password || '')
-    if (!namePattern.test(name)) {
-      return res.status(400).json({ message: 'Enter a name between 2 and 100 characters using letters, spaces, hyphens, or apostrophes' })
+    if (await User.exists({ email })) return res.status(400).json({ message: 'Email already registered. Please sign in instead.' })
+    const code = crypto.randomInt(100000, 1000000).toString()
+    await RegistrationOtp.findOneAndUpdate({ email }, {
+      name, password: await bcrypt.hash(password, 12), codeHash: otpHash(code), expiresAt: new Date(Date.now() + 10 * 60 * 1000), attempts: 0,
+    }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    try {
+      await sendNotification({ to: email, subject: 'Your AYUSYDAH verification code', text: `Your AYUSYDAH verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone.` })
+    } catch (error) {
+      await RegistrationOtp.deleteOne({ email })
+      console.error('Registration verification email failed:', error.message)
+      return res.status(503).json({ message: 'We could not send a verification code right now. Please try again shortly.' })
     }
-    if (!emailPattern.test(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-    if (!isStrongPassword(password)) {
-      return res.status(400).json({ message: 'Password must be 8–128 characters and include uppercase, lowercase, a number, and a symbol' })
-    }
+    res.status(202).json({ message: 'Verification code sent. It expires in 10 minutes.' })
+  } catch (err) { res.status(500).json({ message: 'Unable to start registration.' }) }
+})
 
-    const existingUser = await User.findOne({ email })
-    if (existingUser) {
-      return res.status(400).json({ message: 'Email already registered' })
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12)
-
-    const newUser = new User({ name, email, password: hashedPassword, isAdmin: adminEmails.has(email) })
-    await newUser.save()
-
-    const token = createToken(newUser)
-
-    res.status(201).json({
-      token,
-      user: userResponse(newUser),
-    })
+router.post('/register/verify-otp', registrationVerifyLimiter, async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase()
+  const code = String(req.body.code || '').trim()
+  if (!emailPattern.test(email) || !/^\d{6}$/.test(code)) return res.status(400).json({ message: 'Enter the six-digit verification code.' })
+  try {
+    const pending = await RegistrationOtp.findOne({ email }).select('+password +codeHash')
+    if (!pending || pending.expiresAt <= new Date()) { if (pending) await pending.deleteOne(); return res.status(400).json({ message: 'This verification code has expired. Please request a new one.' }) }
+    if (pending.attempts >= 5) { await pending.deleteOne(); return res.status(429).json({ message: 'Too many incorrect attempts. Please request a new code.' }) }
+    if (!crypto.timingSafeEqual(Buffer.from(otpHash(code)), Buffer.from(pending.codeHash))) { pending.attempts += 1; await pending.save(); return res.status(400).json({ message: 'That verification code is incorrect.' }) }
+    if (await User.exists({ email })) return res.status(409).json({ message: 'Email already registered. Please sign in instead.' })
+    const newUser = new User({ name: pending.name, email, password: pending.password, isAdmin: adminEmails.has(email) })
+    await newUser.save(); await pending.deleteOne()
+    res.status(201).json({ token: createToken(newUser), user: userResponse(newUser) })
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ message: 'Email already registered' })
-    res.status(500).json({ message: 'Unable to register account' })
+    if (err.code === 11000) return res.status(409).json({ message: 'Email already registered. Please sign in instead.' })
+    res.status(500).json({ message: 'Unable to verify your email.' })
   }
 })
 
