@@ -7,7 +7,7 @@ const crypto = require('crypto')
 const https = require('https')
 const User = require('../models/User')
 const RegistrationOtp = require('../models/RegistrationOtp')
-const { sendNotification } = require('../config/mailer')
+const { sendNotification, verificationEmailHtml } = require('../config/mailer')
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const namePattern = /^(?=.{2,100}$)[\p{L}][\p{L}\p{M}' -]*$/u
@@ -80,7 +80,7 @@ router.post('/register/request-otp', registrationOtpLimiter, async (req, res) =>
       name, password: await bcrypt.hash(password, 12), codeHash: otpHash(code), expiresAt: new Date(Date.now() + 10 * 60 * 1000), attempts: 0,
     }, { upsert: true, new: true, setDefaultsOnInsert: true })
     try {
-      await sendNotification({ to: email, subject: 'Your AYUSYDAH verification code', text: `Your AYUSYDAH verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone.` })
+      await sendNotification({ to: email, subject: `${code} is your AYUSYDAH verification code`, text: `Your AYUSYDAH verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone.`, html: verificationEmailHtml(code) })
     } catch (error) {
       await RegistrationOtp.deleteOne({ email })
       console.error('Registration verification email failed:', error.message)
