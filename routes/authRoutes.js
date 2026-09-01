@@ -78,7 +78,7 @@ router.post('/register/request-otp', registrationOtpLimiter, async (req, res) =>
     const code = crypto.randomInt(100000, 1000000).toString()
     await RegistrationOtp.findOneAndUpdate({ email }, {
       name, password: await bcrypt.hash(password, 12), codeHash: otpHash(code), expiresAt: new Date(Date.now() + 10 * 60 * 1000), attempts: 0,
-    }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    }, { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true })
     try {
       await sendNotification({ to: email, subject: `${code} is your AYUSYDAH verification code`, text: `Your AYUSYDAH verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone.`, html: verificationEmailHtml(code) })
     } catch (error) {
