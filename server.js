@@ -21,6 +21,7 @@ const contactRoutes = require('./routes/contact')
 const newsletterRoutes = require('./routes/newsletter')
 const cartRoutes = require('./routes/cartRoutes')
 const wishlistRoutes = require('./routes/wishlistRoutes')
+const stripeWebhookRoutes = require('./routes/stripeWebhook')
 
 const app = express()
 
@@ -41,9 +42,16 @@ app.use(cors({
     return callback(new Error('Origin not allowed by CORS'))
   },
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'Stripe-Signature'],
 }))
 app.use(compression())
+
+// IMPORTANT: Stripe's webhook must receive the RAW, unparsed request body to
+// verify its signature. This route is registered here, BEFORE the global
+// express.json() below, so it never gets JSON-parsed. Every other route in
+// this app continues to use express.json() as normal.
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookRoutes)
+
 app.use(express.json({ limit: '100kb' }))
 app.disable('x-powered-by')
 app.use((req, res, next) => {

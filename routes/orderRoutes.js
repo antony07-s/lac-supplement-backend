@@ -1,10 +1,13 @@
 const express = require('express')
 const router = express.Router()
 const mongoose = require('mongoose')
+const Stripe = require('stripe')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
+
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
 // CREATE a new order
 router.post('/', protect, async (req, res) => {
@@ -91,6 +94,55 @@ router.post('/', protect, async (req, res) => {
     res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to place order' })
   } finally {
     await session.endSession()
+  }
+})
+
+// CREATE a Stripe Checkout Session for an existing pending order.
+// The order itself was already created (and stock already reserved) by the
+// route above, so this step only ever handles payment — it never re-checks
+// or re-deducts stock.
+router.post('/:id/checkout-session', protect, async (req, res) => {
+  if (!stripe) {
+    return res.status(503).json({ message: 'Online payment is not configured yet.' })
+  }
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid order ID' })
+    }
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (String(order.user) !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized to pay for this order' })
+    }
+    if (order.status !== 'pending') {
+      return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
+    }
+
+    const clientUrl = (process.env.CLIENT_URL || process.env.CLIENT_ORIGINS || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '')
+
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      customer_email: req.userEmail || undefined,
+      line_items: order.items.map((item) => ({
+        quantity: item.quantity,
+        price_data: {
+          currency: 'myr',
+          unit_amount: Math.round(item.price * 100), // Stripe expects the smallest currency unit (sen, not ringgit)
+          product_data: {
+            name: item.packSize ? `${item.name} — ${item.packSize}` : item.name,
+          },
+        },
+      })),
+      metadata: { orderId: String(order._id) },
+      success_url: `${clientUrl}/orders/${order._id}?payment=success`,
+      cancel_url: `${clientUrl}/orders/${order._id}?payment=cancelled`,
+    })
+
+    res.json({ url: checkoutSession.url })
+  } catch (err) {
+    console.error('Stripe checkout session error:', err.message)
+    res.status(500).json({ message: 'Unable to start payment. Please try again.' })
   }
 })
 
