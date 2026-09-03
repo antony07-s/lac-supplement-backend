@@ -9,6 +9,19 @@ const { protect, adminOnly } = require('../middleware/authMiddleware')
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
+function checkoutClientUrl(req) {
+  const configuredOrigins = (process.env.CLIENT_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+  const requestOrigin = String(req.get('origin') || '').trim().replace(/\/$/, '')
+  // In development, use the browser that initiated checkout when it is an
+  // allowed origin. This prevents a local Stripe test from returning to the
+  // production site simply because it is listed first in CLIENT_ORIGINS.
+  if (requestOrigin && configuredOrigins.includes(requestOrigin)) return requestOrigin
+  return String(process.env.CLIENT_URL || configuredOrigins[0] || 'http://localhost:5173').trim().replace(/\/$/, '')
+}
+
 // CREATE a new order
 router.post('/', protect, async (req, res) => {
   const clientRequestId = String(req.get('Idempotency-Key') || '').trim()
@@ -118,7 +131,7 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
       return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
     }
 
-    const clientUrl = (process.env.CLIENT_URL || process.env.CLIENT_ORIGINS || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '')
+    const clientUrl = checkoutClientUrl(req)
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: 'payment',
