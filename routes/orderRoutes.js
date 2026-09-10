@@ -6,6 +6,7 @@ const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
+const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
@@ -156,6 +157,117 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
   } catch (err) {
     console.error('Stripe checkout session error:', err.message)
     res.status(500).json({ message: 'Unable to start payment. Please try again.' })
+  }
+})
+
+// CREATE a PayPal Order for an existing pending order.
+// Mirrors the Stripe checkout-session route above — the order/stock is
+// already handled by the POST / route, this only ever deals with payment.
+// Unlike Stripe, PayPal does not return a redirect URL here: the frontend
+// uses this orderId with PayPal's JS SDK to render the buyer approval flow,
+// then calls the capture route (added separately) once approved.
+router.post('/:id/paypal-order', protect, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid order ID' })
+    }
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (String(order.user) !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized to pay for this order' })
+    }
+    if (order.status !== 'pending') {
+      return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
+    }
+
+    const accessToken = await getPayPalAccessToken()
+
+    const ppRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        intent: 'CAPTURE',
+        purchase_units: [
+          {
+            reference_id: String(order._id),
+            amount: {
+              currency_code: 'MYR',
+              value: order.totalAmount.toFixed(2),
+            },
+          },
+        ],
+      }),
+    })
+
+    if (!ppRes.ok) {
+      const errBody = await ppRes.text()
+      console.error('PayPal order creation error:', errBody)
+      return res.status(500).json({ message: 'Unable to start PayPal payment. Please try again.' })
+    }
+
+    const ppData = await ppRes.json()
+    res.json({ orderId: ppData.id })
+  } catch (err) {
+    console.error('PayPal order error:', err.message)
+    res.status(500).json({ message: 'Unable to start payment. Please try again.' })
+  }
+})
+
+// CAPTURE a PayPal payment after the buyer approves it on the frontend.
+// PayPal splits payment into two steps: create order (above) -> buyer
+// approves on PayPal's UI -> capture (this route), which actually moves
+// the money. Stripe does this in one step behind its own hosted page;
+// this is PayPal's equivalent of what the Stripe webhook confirms.
+router.post('/:id/paypal-capture', protect, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid order ID' })
+    }
+    const { paypalOrderId } = req.body
+    if (!paypalOrderId) {
+      return res.status(400).json({ message: 'Missing PayPal order ID' })
+    }
+
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (String(order.user) !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized to pay for this order' })
+    }
+    if (order.status !== 'pending') {
+      return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
+    }
+
+    const accessToken = await getPayPalAccessToken()
+
+    const captureRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${paypalOrderId}/capture`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!captureRes.ok) {
+      const errBody = await captureRes.text()
+      console.error('PayPal capture error:', errBody)
+      return res.status(500).json({ message: 'Payment could not be completed. Please try again.' })
+    }
+
+    const captureData = await captureRes.json()
+    const isCompleted = captureData.status === 'COMPLETED'
+
+    if (isCompleted) {
+      order.status = 'paid'
+      await order.save()
+    }
+
+    res.json({ status: order.status, paypal: captureData.status })
+  } catch (err) {
+    console.error('PayPal capture error:', err.message)
+    res.status(500).json({ message: 'Unable to complete payment. Please try again.' })
   }
 })
 
