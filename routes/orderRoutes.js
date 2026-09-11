@@ -38,7 +38,7 @@ async function verifyItems(items, session) {
     const sellable = variant || product
     if ((variant && !variant.isAvailable) || (sellable.stock !== undefined && sellable.stock < quantity)) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
     const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg ?? process.env.DEFAULT_PRODUCT_WEIGHT_KG ?? 1)
-    const orderItem = { product: product._id, ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }), name: product.name, price: sellable.price, weightKg, quantity }
+    const orderItem = { product: product._id, image: variant?.image || product.image, ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku }), name: product.name, price: sellable.price, weightKg, quantity }
     verified.push({ product, sellable, quantity, orderItem })
   }
   return verified
@@ -113,7 +113,8 @@ router.post('/', protect, async (req, res) => {
         totalAmount += sellable.price * quantity
         verifiedItems.push({
           product: product._id,
-          ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }),
+          image: variant?.image || product.image,
+          ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku }),
           name: product.name,
           price: sellable.price,
           weightKg,
