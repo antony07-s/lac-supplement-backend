@@ -55,6 +55,7 @@ const productPayload = (body) => ({
   healthGoals: [...new Set((Array.isArray(body.healthGoals) ? body.healthGoals : [])
     .map((goal) => String(goal || '').trim())
     .filter(Boolean))].slice(0, 8),
+  ...(body.shippingWeightKg !== undefined && { shippingWeightKg: requiredNumber(body.shippingWeightKg, 'Shipping weight') }),
   ...(body.stock !== undefined && { stock: Number(body.stock) }),
   ...(Array.isArray(body.variants) && {
     variants: body.variants.map((variant) => ({
@@ -65,6 +66,7 @@ const productPayload = (body) => ({
       sku: String(variant.sku || '').trim(),
       stock: requiredNumber(variant.stock, 'Variant stock'),
       image: String(variant.image || '').trim(),
+      ...(variant.shippingWeightKg !== undefined && { shippingWeightKg: requiredNumber(variant.shippingWeightKg, 'Variant shipping weight') }),
       isAvailable: variant.isAvailable !== false,
     })),
   }),

@@ -3,6 +3,12 @@ const PAYPAL_BASE = process.env.PAYPAL_ENV === 'live'
   : 'https://api-m.sandbox.paypal.com'
 
 async function getPayPalAccessToken() {
+  if (process.env.NODE_ENV === 'production' && process.env.PAYPAL_ENV !== 'live') {
+    throw new Error('PayPal must use PAYPAL_ENV=live in production')
+  }
+  if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_CLIENT_SECRET) {
+    throw new Error('PayPal credentials are not configured')
+  }
   const auth = Buffer.from(
     `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`
   ).toString('base64')
@@ -17,8 +23,7 @@ async function getPayPalAccessToken() {
   })
 
   if (!res.ok) {
-  const errText = await res.text()
-  console.error('PayPal token error:', res.status, errText)
+  console.error('PayPal token request failed:', res.status)
   throw new Error('Failed to get PayPal access token')
 }
 

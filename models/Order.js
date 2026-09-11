@@ -11,6 +11,7 @@ const orderSchema = new mongoose.Schema({
             sku: { type: String, trim: true },
             image: { type: String, trim: true },
             price: { type: Number, required: true },
+            weightKg: { type: Number, min: 0, default: 0 },
             quantity: { type: Number, required: true },
         },
     ],
@@ -24,8 +25,18 @@ const orderSchema = new mongoose.Schema({
         postcode: { type: String, required: true },
     },
     totalAmount: { type: Number, required: true, min: 0 },
+    subtotal: { type: Number, min: 0, default: 0 },
+    discount: { type: Number, required: true, min: 0, default: 0 },
+    shipping: { type: Number, required: true, min: 0, default: 0 },
+    totalWeightKg: { type: Number, min: 0, default: 0 },
+    shippingRegion: { type: String, enum: ['west-malaysia', 'east-malaysia'] },
     clientRequestId: { type: String, trim: true, maxlength: 100, unique: true, sparse: true },
-    status: { type: String, enum: ['pending', 'paid', 'shipped', 'delivered'], default: 'pending' },
+    paypalOrderId: { type: String, trim: true, unique: true, sparse: true },
+    paypalCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
+    paypalCaptureId: { type: String, trim: true, unique: true, sparse: true },
+    paymentProvider: { type: String, enum: ['paypal', 'stripe'] },
+    stockReserved: { type: Boolean, default: true },
+    status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered'], default: 'pending' },
 }, { timestamps: true })
 
 orderSchema.index({ user: 1, createdAt: -1 })

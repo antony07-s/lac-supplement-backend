@@ -7,6 +7,7 @@ const variantSchema = new mongoose.Schema({
   sku: { type: String, trim: true, uppercase: true, maxlength: 100 },
   stock: { type: Number, required: true, min: 0, default: 0 },
   image: { type: String, trim: true },
+  shippingWeightKg: { type: Number, min: 0 },
   isAvailable: { type: Boolean, default: true },
 }, { _id: true })
 
@@ -18,6 +19,9 @@ const productSchema = new mongoose.Schema({
   rating: { type: Number, default: 0, min: 0, max: 5 },
   reviews: { type: Number, default: 0, min: 0 },
   stock: { type: Number, min: 0 },
+  // Kilograms. Required for a shipping-enabled checkout; existing catalogue
+  // records must be populated by an administrator before sale.
+  shippingWeightKg: { type: Number, min: 0 },
   description: { type: String, trim: true, maxlength: 5000 },
   videoUrl: { type: String, trim: true, maxlength: 2048 },
   videoPublicId: { type: String, trim: true, maxlength: 500 },

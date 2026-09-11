@@ -1,14 +1,48 @@
 const express = require('express')
 const router = express.Router()
 const mongoose = require('mongoose')
+const { randomUUID } = require('crypto')
 const Stripe = require('stripe')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
+const { calculateCheckout, moneyToSen } = require('../utils/checkout')
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
+
+function cleanAddress(address) {
+  const fields = ['fullName', 'phone', 'addressLine1', 'addressLine2', 'city', 'state', 'postcode']
+  const cleaned = Object.fromEntries(fields.map((field) => [field, String(address?.[field] || '').trim()]))
+  const missing = ['fullName', 'phone', 'addressLine1', 'city', 'state', 'postcode'].find((field) => !cleaned[field])
+  if (missing) throw Object.assign(new Error(`Shipping address is missing: ${missing}`), { status: 400 })
+  if (Object.values(cleaned).some((value) => value.length > 200)) throw Object.assign(new Error('Shipping address contains an invalid value'), { status: 400 })
+  if (!/^\d{5}$/.test(cleaned.postcode)) throw Object.assign(new Error('Enter a valid Malaysian 5-digit postcode'), { status: 400 })
+  if (!/^[+\d()\-\s]{7,25}$/.test(cleaned.phone)) throw Object.assign(new Error('Enter a valid phone number'), { status: 400 })
+  return cleaned
+}
+
+async function verifyItems(items, session) {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw Object.assign(new Error('No items in order'), { status: 400 })
+  const verified = []
+  for (const item of items) {
+    const quantity = Number(item.quantity)
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
+    const query = Product.findById(item.product)
+    if (session) query.session(session)
+    const product = await query
+    if (!product) throw Object.assign(new Error('A product in the order was not found'), { status: 400 })
+    const variant = (item.variant || item.variantId) ? product.variants.id(item.variant || item.variantId) : null
+    if ((item.variant || item.variantId) && !variant) throw Object.assign(new Error(`Selected option for ${product.name} is no longer available`), { status: 409 })
+    const sellable = variant || product
+    if ((variant && !variant.isAvailable) || (sellable.stock !== undefined && sellable.stock < quantity)) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
+    const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg)
+    const orderItem = { product: product._id, ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }), name: product.name, price: sellable.price, weightKg, quantity }
+    verified.push({ product, sellable, quantity, orderItem })
+  }
+  return verified
+}
 
 function checkoutClientUrl(req) {
   const configuredOrigins = (process.env.CLIENT_ORIGINS || '')
@@ -33,16 +67,7 @@ router.post('/', protect, async (req, res) => {
   const session = await Order.startSession()
   try {
     const { items, shippingAddress } = req.body
-
-    if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
-      return res.status(400).json({ message: 'No items in order' })
-    }
-
-    const requiredAddressFields = ['fullName', 'phone', 'addressLine1', 'city', 'state', 'postcode']
-    const missingField = requiredAddressFields.find((field) => !shippingAddress?.[field]?.trim())
-    if (missingField) {
-      return res.status(400).json({ message: `Shipping address is missing: ${missingField}` })
-    }
+    const address = cleanAddress(shippingAddress)
 
     let savedOrder
     let wasDuplicate = false
@@ -70,6 +95,10 @@ router.post('/', protect, async (req, res) => {
 
         const sellable = variant || product
         const stock = sellable.stock
+        const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg)
+        if (!Number.isFinite(weightKg) || weightKg <= 0) {
+          throw Object.assign(new Error(`${product.name} needs a valid shipping weight before checkout`), { status: 409 })
+        }
         if (variant && (!variant.isAvailable || stock < quantity)) {
           throw Object.assign(new Error(`${product.name} — ${variant.packSize} is unavailable`), { status: 409 })
         }
@@ -87,15 +116,18 @@ router.post('/', protect, async (req, res) => {
           ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }),
           name: product.name,
           price: sellable.price,
+          weightKg,
           quantity,
         })
       }
 
+      const checkout = calculateCheckout({ items: verifiedItems, state: address.state })
+
       ;[savedOrder] = await Order.create([{
         user: req.userId,
         items: verifiedItems,
-        shippingAddress,
-        totalAmount,
+        shippingAddress: address,
+        ...checkout,
         clientRequestId,
       }], { session })
     })
@@ -108,6 +140,16 @@ router.post('/', protect, async (req, res) => {
     res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to place order' })
   } finally {
     await session.endSession()
+  }
+})
+
+router.post('/quote', protect, async (req, res) => {
+  try {
+    const address = cleanAddress(req.body.shippingAddress)
+    const verified = await verifyItems(req.body.items)
+    res.json(calculateCheckout({ items: verified.map((entry) => entry.orderItem), state: address.state }))
+  } catch (err) {
+    res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to calculate checkout total' })
   }
 })
 
@@ -179,7 +221,22 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
     if (order.status !== 'pending') {
       return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
     }
+    if (order.paypalOrderId) return res.json({ orderId: order.paypalOrderId })
 
+    // Persist PayPal's idempotency key before contacting it. Retries (including
+    // a browser retry after a lost response) reuse the same provider order.
+    let requestId = order.paypalCreateRequestId
+    if (!requestId) {
+      const claimed = await Order.findOneAndUpdate(
+        { _id: order._id, status: 'pending', paypalCreateRequestId: { $exists: false } },
+        { $set: { paypalCreateRequestId: randomUUID(), paymentProvider: 'paypal' } },
+        { new: true },
+      )
+      const current = claimed || await Order.findById(order._id)
+      if (!current || current.status !== 'pending') return res.status(409).json({ message: 'This order can no longer be paid' })
+      if (current.paypalOrderId) return res.json({ orderId: current.paypalOrderId })
+      requestId = current.paypalCreateRequestId
+    }
     const accessToken = await getPayPalAccessToken()
 
     const ppRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
@@ -187,6 +244,7 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
+        'PayPal-Request-Id': requestId,
       },
       body: JSON.stringify({
         intent: 'CAPTURE',
@@ -203,12 +261,13 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
     })
 
     if (!ppRes.ok) {
-      const errBody = await ppRes.text()
-      console.error('PayPal order creation error:', errBody)
+      console.error('PayPal order creation failed:', ppRes.status)
       return res.status(500).json({ message: 'Unable to start PayPal payment. Please try again.' })
     }
 
     const ppData = await ppRes.json()
+    if (!ppData.id) return res.status(502).json({ message: 'PayPal returned an invalid order response' })
+    await Order.findOneAndUpdate({ _id: order._id, status: 'pending' }, { paypalOrderId: ppData.id, paymentProvider: 'paypal' })
     res.json({ orderId: ppData.id })
   } catch (err) {
     console.error('PayPal order error:', err.message)
@@ -226,8 +285,8 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid order ID' })
     }
-    const { paypalOrderId } = req.body
-    if (!paypalOrderId) {
+    const paypalOrderId = String(req.body.paypalOrderId || '').trim()
+    if (!/^[A-Z0-9]{10,40}$/i.test(paypalOrderId)) {
       return res.status(400).json({ message: 'Missing PayPal order ID' })
     }
 
@@ -239,8 +298,20 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     if (order.status !== 'pending') {
       return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
     }
+    if (order.paypalOrderId !== paypalOrderId) return res.status(409).json({ message: 'This PayPal order does not belong to this checkout' })
 
     const accessToken = await getPayPalAccessToken()
+
+    // Never accept the browser's approval as proof of payment. Read the
+    // server-side PayPal order first and bind its reference, currency and
+    // exact backend-calculated amount to this internal order.
+    const detailsRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${paypalOrderId}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+    if (!detailsRes.ok) return res.status(502).json({ message: 'Unable to verify the PayPal payment. Please try again.' })
+    const details = await detailsRes.json()
+    const unit = details.purchase_units?.[0]
+    if (details.status !== 'APPROVED' || unit?.reference_id !== String(order._id) || unit?.amount?.currency_code !== 'MYR' || moneyToSen(unit?.amount?.value) !== moneyToSen(order.totalAmount)) {
+      return res.status(409).json({ message: 'PayPal payment details do not match this order' })
+    }
 
     const captureRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${paypalOrderId}/capture`, {
       method: 'POST',
@@ -251,16 +322,17 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     })
 
     if (!captureRes.ok) {
-      const errBody = await captureRes.text()
-      console.error('PayPal capture error:', errBody)
+      console.error('PayPal capture failed:', captureRes.status)
       return res.status(500).json({ message: 'Payment could not be completed. Please try again.' })
     }
 
     const captureData = await captureRes.json()
-    const isCompleted = captureData.status === 'COMPLETED'
+    const capture = captureData.purchase_units?.[0]?.payments?.captures?.[0]
+    const isCompleted = captureData.status === 'COMPLETED' && capture?.status === 'COMPLETED' && capture?.amount?.currency_code === 'MYR' && moneyToSen(capture?.amount?.value) === moneyToSen(order.totalAmount)
 
     if (isCompleted) {
       order.status = 'paid'
+      order.paypalCaptureId = capture.id
       await order.save()
     }
 
@@ -268,6 +340,40 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
   } catch (err) {
     console.error('PayPal capture error:', err.message)
     res.status(500).json({ message: 'Unable to complete payment. Please try again.' })
+  }
+})
+
+// A cancelled buyer approval must release the reservation exactly once. This
+// also gives the UI a safe recovery path after a timeout or network failure.
+router.post('/:id/cancel-payment', protect, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
+  const session = await Order.startSession()
+  try {
+    let result
+    await session.withTransaction(async () => {
+      const order = await Order.findOne({ _id: req.params.id, user: req.userId }).session(session)
+      if (!order) throw Object.assign(new Error('Order not found'), { status: 404 })
+      if (order.status === 'paid') { result = order; return }
+      if (order.status === 'cancelled') { result = order; return }
+      for (const item of order.items) {
+        const product = await Product.findById(item.product).session(session)
+        if (!product) continue
+        const sellable = item.variant ? product.variants.id(item.variant) : product
+        if (sellable && sellable.stock !== undefined) {
+          sellable.stock += item.quantity
+          await product.save({ session })
+        }
+      }
+      order.status = 'cancelled'
+      order.stockReserved = false
+      await order.save({ session })
+      result = order
+    })
+    res.json({ status: result.status })
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.status ? err.message : 'Unable to cancel this payment' })
+  } finally {
+    await session.endSession()
   }
 })
 
@@ -316,14 +422,18 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.put('/:id/status', protect, adminOnly, async (req, res) => {
   try {
     const { status } = req.body
-    const validStatuses = ['pending', 'paid', 'shipped', 'delivered']
-    if (!validStatuses.includes(status)) {
+    if (!['shipped', 'delivered'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })
     }
-    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true })
+    const order = await Order.findById(req.params.id)
     if (!order) {
       return res.status(404).json({ message: 'Order not found' })
     }
+    if ((status === 'shipped' && order.status !== 'paid') || (status === 'delivered' && order.status !== 'shipped')) {
+      return res.status(409).json({ message: 'Order status transition is not allowed' })
+    }
+    order.status = status
+    await order.save()
     res.json(order)
   } catch (err) {
     res.status(500).json({ message: err.message })

@@ -22,6 +22,7 @@ const newsletterRoutes = require('./routes/newsletter')
 const cartRoutes = require('./routes/cartRoutes')
 const wishlistRoutes = require('./routes/wishlistRoutes')
 const stripeWebhookRoutes = require('./routes/stripeWebhook')
+const paypalWebhookRoutes = require('./routes/paypalWebhook')
 
 const app = express()
 
@@ -53,6 +54,7 @@ app.use(compression())
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookRoutes)
 
 app.use(express.json({ limit: '100kb' }))
+app.use('/api/paypal/webhook', paypalWebhookRoutes)
 app.disable('x-powered-by')
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
