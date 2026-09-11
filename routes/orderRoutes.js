@@ -37,7 +37,7 @@ async function verifyItems(items, session) {
     if ((item.variant || item.variantId) && !variant) throw Object.assign(new Error(`Selected option for ${product.name} is no longer available`), { status: 409 })
     const sellable = variant || product
     if ((variant && !variant.isAvailable) || (sellable.stock !== undefined && sellable.stock < quantity)) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
-    const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg)
+    const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg ?? process.env.DEFAULT_PRODUCT_WEIGHT_KG ?? 1)
     const orderItem = { product: product._id, ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku, image: variant.image || product.image }), name: product.name, price: sellable.price, weightKg, quantity }
     verified.push({ product, sellable, quantity, orderItem })
   }
@@ -95,7 +95,7 @@ router.post('/', protect, async (req, res) => {
 
         const sellable = variant || product
         const stock = sellable.stock
-        const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg)
+        const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg ?? process.env.DEFAULT_PRODUCT_WEIGHT_KG ?? 1)
         if (!Number.isFinite(weightKg) || weightKg <= 0) {
           throw Object.assign(new Error(`${product.name} needs a valid shipping weight before checkout`), { status: 409 })
         }
