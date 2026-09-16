@@ -98,6 +98,7 @@ router.get('/', protect, adminOnly, async (req, res, next) => {
 
 router.put('/:id/status', protect, adminOnly, async (req, res, next) => {
   if (!['pending', 'approved', 'rejected'].includes(req.body.status)) return res.status(400).json({ message: 'Invalid review status' })
+  if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid review ID' })
   try {
     const review = await Review.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true })
     if (!review) return res.status(404).json({ message: 'Review not found' })
@@ -106,6 +107,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res, next) => {
 })
 
 router.delete('/:id', protect, adminOnly, async (req, res, next) => {
+  if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid review ID' })
   try {
     const review = await Review.findByIdAndDelete(req.params.id)
     if (!review) return res.status(404).json({ message: 'Review not found' })

@@ -2,7 +2,6 @@ const express = require('express')
 const router = express.Router()
 const mongoose = require('mongoose')
 const { randomUUID } = require('crypto')
-const Stripe = require('stripe')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
@@ -10,7 +9,6 @@ const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
 function cleanAddress(address) {
   const fields = ['fullName', 'phone', 'addressLine1', 'addressLine2', 'city', 'state', 'postcode']
@@ -27,6 +25,9 @@ async function verifyItems(items, session) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw Object.assign(new Error('No items in order'), { status: 400 })
   const verified = []
   for (const item of items) {
+    if (!mongoose.isValidObjectId(item?.product) || ((item.variant || item.variantId) && !mongoose.isValidObjectId(item.variant || item.variantId))) {
+      throw Object.assign(new Error('Invalid product option'), { status: 400 })
+    }
     const quantity = Number(item.quantity)
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
     const query = Product.findById(item.product)
@@ -42,19 +43,6 @@ async function verifyItems(items, session) {
     verified.push({ product, sellable, quantity, orderItem })
   }
   return verified
-}
-
-function checkoutClientUrl(req) {
-  const configuredOrigins = (process.env.CLIENT_ORIGINS || '')
-    .split(',')
-    .map((origin) => origin.trim().replace(/\/$/, ''))
-    .filter(Boolean)
-  const requestOrigin = String(req.get('origin') || '').trim().replace(/\/$/, '')
-  // In development, use the browser that initiated checkout when it is an
-  // allowed origin. This prevents a local Stripe test from returning to the
-  // production site simply because it is listed first in CLIENT_ORIGINS.
-  if (requestOrigin && configuredOrigins.includes(requestOrigin)) return requestOrigin
-  return String(process.env.CLIENT_URL || configuredOrigins[0] || 'http://localhost:5173').trim().replace(/\/$/, '')
 }
 
 // CREATE a new order
@@ -83,6 +71,9 @@ router.post('/', protect, async (req, res) => {
       const verifiedItems = []
 
       for (const item of items) {
+        if (!mongoose.isValidObjectId(item?.product) || ((item.variant || item.variantId) && !mongoose.isValidObjectId(item.variant || item.variantId))) {
+          throw Object.assign(new Error('Invalid product option'), { status: 400 })
+        }
         const quantity = Number(item.quantity)
         if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) {
           throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
@@ -158,6 +149,7 @@ router.post('/quote', protect, async (req, res) => {
 // The order itself was already created (and stock already reserved) by the
 // route above, so this step only ever handles payment — it never re-checks
 // or re-deducts stock.
+/* Removed Stripe Checkout endpoint.
 router.post('/:id/checkout-session', protect, async (req, res) => {
   if (!stripe) {
     return res.status(503).json({ message: 'Online payment is not configured yet.' })
@@ -181,11 +173,13 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
       mode: 'payment',
       payment_method_types: ['card'],
       customer_email: req.userEmail || undefined,
-      line_items: order.items.map((item) => ({
-        quantity: item.quantity,
+      // One server-calculated final-total line prevents shipping and discounts
+      // being omitted from the Stripe charge.
+      line_items: order.items.slice(0, 1).map((item) => ({
+        quantity: 1,
         price_data: {
           currency: 'myr',
-          unit_amount: Math.round(item.price * 100), // Stripe expects the smallest currency unit (sen, not ringgit)
+          unit_amount: moneyToSen(order.totalAmount),
           product_data: {
             name: item.packSize ? `${item.name} — ${item.packSize}` : item.name,
           },
@@ -194,7 +188,12 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
       metadata: { orderId: String(order._id) },
       success_url: `${clientUrl}/orders/${order._id}?payment=success`,
       cancel_url: `${clientUrl}/orders/${order._id}?payment=cancelled`,
-    })
+    }, { idempotencyKey: `checkout-order-${order._id}` })
+
+    await Order.findOneAndUpdate(
+      { _id: order._id, status: 'pending' },
+      { $set: { stripeCheckoutSessionId: checkoutSession.id, paymentProvider: 'stripe' } },
+    )
 
     res.json({ url: checkoutSession.url })
   } catch (err) {
@@ -203,6 +202,7 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
   }
 })
 
+*/
 // CREATE a PayPal Order for an existing pending order.
 // Mirrors the Stripe checkout-session route above — the order/stock is
 // already handled by the POST / route, this only ever deals with payment.
@@ -381,6 +381,7 @@ router.post('/:id/cancel-payment', protect, async (req, res) => {
 // GET all orders for a specific user
 router.get('/user/:userId', protect, async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.userId)) return res.status(400).json({ message: 'Invalid user ID' })
     if (req.userId !== req.params.userId) {
       return res.status(403).json({ message: 'Not authorized to view these orders' })
     }
@@ -422,6 +423,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 // UPDATE order status (admin only)
 router.put('/:id/status', protect, adminOnly, async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
     const { status } = req.body
     if (!['shipped', 'delivered'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })

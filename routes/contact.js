@@ -1,10 +1,12 @@
 const express = require('express')
+const rateLimit = require('express-rate-limit')
 const router = express.Router()
+const contactLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many messages sent. Please try again later.' } })
 const crypto = require('crypto')
 const Message = require('../models/Message')
 const { sendNotification } = require('../config/mailer')
 
-router.post('/', async (req, res) => {
+router.post('/', contactLimiter, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim()
     const email = String(req.body.email || '').trim().toLowerCase()

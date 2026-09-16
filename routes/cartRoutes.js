@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const Cart = require('../models/Cart')
 const Product = require('../models/Product')
+const mongoose = require('mongoose')
 const { protect } = require('../middleware/authMiddleware')
 
 router.get('/', protect, async (req, res) => {
@@ -27,7 +28,7 @@ router.put('/', protect, async (req, res) => {
     const formattedItems = []
     for (const item of items.slice(0, 50)) {
       const quantity = Number(item.quantity)
-      if (!item.productId || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) continue
+      if (!mongoose.isValidObjectId(item.productId) || (item.variantId && !mongoose.isValidObjectId(item.variantId)) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) continue
       const product = await Product.findById(item.productId).select('variants stock')
       if (!product) continue
       const variant = item.variantId ? product.variants.id(item.variantId) : null

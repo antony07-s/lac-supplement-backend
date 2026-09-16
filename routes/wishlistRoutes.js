@@ -1,6 +1,8 @@
 const express = require('express')
 const router = express.Router()
 const Wishlist = require('../models/Wishlist')
+const mongoose = require('mongoose')
+const Product = require('../models/Product')
 const { protect } = require('../middleware/authMiddleware')
 
 router.get('/', protect, async (req, res) => {
@@ -24,7 +26,13 @@ router.put('/', protect, async (req, res) => {
     if (!Array.isArray(items)) {
       return res.status(400).json({ message: 'items must be an array' })
     }
-    const formattedItems = items.slice(0, 100).filter((item) => item.productId).map((item) => ({ product: item.productId, ...(item.variantId && { variant: item.variantId }) }))
+    const formattedItems = []
+    for (const item of items.slice(0, 100)) {
+      if (!mongoose.isValidObjectId(item.productId) || (item.variantId && !mongoose.isValidObjectId(item.variantId))) continue
+      const product = await Product.findById(item.productId).select('variants')
+      if (!product || (item.variantId && !product.variants.id(item.variantId))) continue
+      formattedItems.push({ product: product._id, ...(item.variantId && { variant: item.variantId }) })
+    }
 
     const wishlist = await Wishlist.findOneAndUpdate(
       { user: req.userId },

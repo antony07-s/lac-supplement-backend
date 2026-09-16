@@ -34,7 +34,7 @@ const orderSchema = new mongoose.Schema({
     paypalOrderId: { type: String, trim: true, unique: true, sparse: true },
     paypalCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
     paypalCaptureId: { type: String, trim: true, unique: true, sparse: true },
-    paymentProvider: { type: String, enum: ['paypal', 'stripe'] },
+    paymentProvider: { type: String, enum: ['paypal'] },
     stockReserved: { type: Boolean, default: true },
     status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered'], default: 'pending' },
 }, { timestamps: true })

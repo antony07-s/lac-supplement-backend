@@ -1,9 +1,11 @@
 const express = require('express')
+const rateLimit = require('express-rate-limit')
 const router = express.Router()
+const newsletterLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many subscription requests. Please try again later.' } })
 const Subscriber = require('../models/Subscriber')
 const { sendNotification } = require('../config/mailer')
 
-router.post('/', async (req, res) => {
+router.post('/', newsletterLimiter, async (req, res) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase()
     if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 254) {

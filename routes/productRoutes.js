@@ -5,6 +5,7 @@ const Product = require('../models/Product')
 const { cloudinary, storage, videoStorage } = require('../config/cloudinary')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { canonicalCategory, categoryValues } = require('../config/categories')
+const isValidId = (id) => require('mongoose').isValidObjectId(id)
 
 const upload = multer({
   storage,
@@ -97,6 +98,7 @@ router.get('/', async (req, res, next) => {
 // GET a single product by ID
 router.get('/:id', async (req, res, next) => {
   try {
+    if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid product ID' })
     const product = await Product.findById(req.params.id)
     if (!product) {
       return res.status(404).json({ message: 'Product not found' })
@@ -147,6 +149,7 @@ router.post('/upload-video', protect, adminOnly, uploadVideo.single('video'), (r
 // PUT (update) an existing product
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid product ID' })
     const existingProduct = await Product.findById(req.params.id)
     if (!existingProduct) {
       return res.status(404).json({ message: 'Product not found' })
@@ -169,6 +172,7 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
 // DELETE a single product
 router.delete('/:id', protect, adminOnly, async (req, res, next) => {
   try {
+    if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid product ID' })
     const deletedProduct = await Product.findByIdAndDelete(req.params.id)
     if (!deletedProduct) {
       return res.status(404).json({ message: 'Product not found' })
