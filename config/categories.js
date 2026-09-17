@@ -3,6 +3,7 @@ const CATEGORY_ALIASES = {
   Ayurveda: ['Ayurveda'],
   'Beauty & Hair': ['Beauty & Hair', 'Beauty & Slimming'],
   'Food & Nutrition': ['Food & Nutrition', 'Food'],
+  'Nutrition & Juices': ['Nutrition & Juices'],
   Brands: ['Brands'],
 }
 
