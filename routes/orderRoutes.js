@@ -8,6 +8,7 @@ const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
+const { sendOrderPaidEmails } = require('../utils/notify')
 
 
 function cleanAddress(address) {
@@ -337,7 +338,18 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
       await order.save()
     }
 
+    // Respond to the browser FIRST. The buyer should see "payment successful"
+    // immediately, without waiting on email sending (which can be slow or fail).
     res.json({ status: order.status, paypal: captureData.status })
+
+    // Fire-and-forget notification block - runs AFTER the response is sent.
+    if (isCompleted) {
+      User.findById(order.user)
+        .select('email')
+        .lean()
+        .then((buyer) => sendOrderPaidEmails(order, buyer?.email))
+        .catch((err) => console.error('Order notification error:', err.message))
+    }
   } catch (err) {
     console.error('PayPal capture error:', err.message)
     res.status(500).json({ message: 'Unable to complete payment. Please try again.' })
