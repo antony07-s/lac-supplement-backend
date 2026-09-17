@@ -58,6 +58,17 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
     throw error
   }
 
+  const configuredRecipient = process.env.CONTACT_RECIPIENT?.trim()
+  const recipient = to || configuredRecipient || 'antony.s8637@gmail.com'
+
+  if (!to && !configuredRecipient) {
+    console.error(
+      'CRITICAL EMAIL CONFIGURATION WARNING: CONTACT_RECIPIENT is missing. '
+      + 'Admin notification is falling back to antony.s8637@gmail.com. '
+      + 'Set CONTACT_RECIPIENT immediately.',
+    )
+  }
+
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -66,7 +77,7 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
     },
     body: JSON.stringify({
       from: process.env.EMAIL_FROM || 'Ayusydah <onboarding@resend.dev>',
-      to: to || process.env.CONTACT_RECIPIENT || 'antony.s8637@gmail.com',
+      to: recipient,
       subject,
       text,
       html,

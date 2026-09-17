@@ -1,70 +1,95 @@
-// utils/notify.js
-// Handles all order-related email notifications (customer confirmation + admin alert).
-// Reuses the existing Resend-based mailer (config/mailer.js) that already powers
-// the Contact Us feature, instead of creating a second/separate email connection.
-
 const { sendNotification } = require('../config/mailer')
 
-// Small helper to format numbers as Malaysian Ringgit consistently everywhere.
-const money = (n) => `RM ${Number(n).toFixed(2)}`
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
 
-// Builds the <tr> rows for the items table inside the email.
-// Reuses the same order.items structure you already store in MongoDB.
+const money = (value) => {
+  const amount = Number(value)
+  return `RM ${Number.isFinite(amount) ? amount.toFixed(2) : '0.00'}`
+}
+
 function orderRows(order) {
-  return order.items
-    .map((i) => {
-      // If the item has a variant (e.g. "500g pack"), show it next to the name.
-      const name = i.packSize ? `${i.name} — ${i.packSize}` : i.name
+  return (order.items || [])
+    .map((item) => {
+      const name = item.packSize ? `${item.name} — ${item.packSize}` : item.name
       return `<tr>
-        <td style="padding:8px;border-bottom:1px solid #eee">${name}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">${i.quantity}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${money(i.price * i.quantity)}</td>
+        <td style="padding:12px 8px;border-bottom:1px solid #edf0f5;color:#182235;font-size:14px;line-height:20px;">${escapeHtml(name)}</td>
+        <td style="padding:12px 8px;border-bottom:1px solid #edf0f5;text-align:center;color:#5c6677;font-size:14px;">${escapeHtml(item.quantity)}</td>
+        <td style="padding:12px 8px;border-bottom:1px solid #edf0f5;text-align:right;color:#182235;font-size:14px;font-weight:600;">${escapeHtml(money(Number(item.price) * Number(item.quantity)))}</td>
       </tr>`
     })
     .join('')
 }
 
-// Formats the shipping address block used in both customer and admin emails.
-function addressBlock(a) {
-  return [a.fullName, a.phone, a.addressLine1, a.addressLine2, `${a.postcode} ${a.city}`, a.state]
-    .filter(Boolean) // removes empty addressLine2 if not provided
+function addressBlock(address) {
+  const a = address || {}
+  return [
+    a.fullName,
+    a.phone,
+    a.addressLine1,
+    a.addressLine2,
+    [a.postcode, a.city].filter(Boolean).join(' '),
+    a.state,
+  ]
+    .filter(Boolean)
+    .map(escapeHtml)
     .join('<br>')
 }
 
-// Builds the full HTML email body.
-// forAdmin=true changes the heading/wording slightly (internal alert vs customer-facing).
 function buildHtml(order, { forAdmin = false } = {}) {
-  const id = String(order._id)
-  return `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;color:#222">
-    <h2 style="margin-bottom:4px">${forAdmin ? 'New paid order' : 'Thank you for your order'}</h2>
-    <p style="color:#666;margin-top:0">Order ID: ${id}</p>
+  const orderId = escapeHtml(order._id)
+  const total = escapeHtml(money(order.totalAmount))
+  const heading = forAdmin ? 'New order received' : 'Thank you for your order'
+  const intro = forAdmin
+    ? 'A customer has completed payment for a new order. Please review and prepare it for fulfilment.'
+    : 'We have received your payment and are preparing your order.'
 
-    <table style="width:100%;border-collapse:collapse;margin:16px 0">
-      <thead>
-        <tr style="background:#f6f6f6">
-          <th style="padding:8px;text-align:left">Item</th>
-          <th style="padding:8px;text-align:center">Qty</th>
-          <th style="padding:8px;text-align:right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>${orderRows(order)}</tbody>
-    </table>
-
-    <p style="text-align:right;font-size:16px"><strong>Total paid: ${money(order.totalAmount)}</strong></p>
-
-    <h3 style="margin-bottom:4px">Delivery address</h3>
-    <p style="margin-top:0;line-height:1.6">${addressBlock(order.shippingAddress)}</p>
-
-    ${forAdmin ? '' : '<p style="color:#666">We will notify you once your order ships.</p>'}
-  </div>`
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${heading}</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#f5f7fb;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(20,37,63,.08);">
+        <tr><td style="background:#123f7a;padding:28px 36px;text-align:center;"><span style="color:#ffffff;font-size:24px;font-weight:700;letter-spacing:.4px;">AYUSYDAH<span style="color:#d7ac54;">.</span></span></td></tr>
+        <tr><td style="padding:36px 36px 28px;">
+          <h1 style="margin:0 0 12px;font-size:24px;line-height:32px;color:#182235;">${heading}</h1>
+          <p style="margin:0;color:#5c6677;font-size:15px;line-height:24px;">${intro}</p>
+          ${forAdmin ? '<div style="margin:24px 0 0;background:#fff8e8;border:1px solid #f1d9a5;border-radius:10px;padding:14px 16px;color:#765815;font-size:14px;line-height:21px;"><strong>Internal alert:</strong> This order has been paid and is ready for fulfilment.</div>' : ''}
+          <div style="margin:28px 0 20px;background:#f3f6fc;border:1px solid #dce5f4;border-radius:12px;padding:16px 20px;">
+            <span style="display:block;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.7px;">Order ID</span>
+            <span style="display:block;margin-top:4px;color:#123f7a;font-size:15px;line-height:22px;font-weight:700;word-break:break-all;">${orderId}</span>
+          </div>
+          <h2 style="margin:0 0 10px;font-size:17px;line-height:24px;color:#182235;">Order summary</h2>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid #edf0f5;border-radius:10px;overflow:hidden;">
+            <thead><tr style="background:#f3f6fc;"><th style="padding:11px 8px;text-align:left;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.4px;">Item</th><th style="padding:11px 8px;text-align:center;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.4px;">Qty</th><th style="padding:11px 8px;text-align:right;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.4px;">Amount</th></tr></thead>
+            <tbody>${orderRows(order)}</tbody>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;margin-top:18px;"><tr><td style="padding:14px 16px;background:#123f7a;border-radius:10px;color:#ffffff;font-size:16px;line-height:24px;font-weight:700;">Total paid</td><td align="right" style="padding:14px 16px;background:#123f7a;border-radius:10px;color:#ffffff;font-size:18px;line-height:24px;font-weight:700;">${total}</td></tr></table>
+          <h2 style="margin:28px 0 8px;font-size:17px;line-height:24px;color:#182235;">Delivery address</h2>
+          <div style="background:#f8fafc;border:1px solid #edf0f5;border-radius:10px;padding:16px;color:#5c6677;font-size:14px;line-height:22px;">${addressBlock(order.shippingAddress)}</div>
+          ${forAdmin ? '' : '<p style="margin:24px 0 0;color:#5c6677;font-size:14px;line-height:22px;">We will notify you once your order ships.</p>'}
+        </td></tr>
+        <tr><td style="border-top:1px solid #edf0f5;padding:20px 36px;color:#8791a1;font-size:12px;line-height:18px;text-align:center;">&copy; ${new Date().getFullYear()} AYUSYDAH. All rights reserved.</td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
 }
 
-// Plain-text fallback version, since sendNotification supports both text and html.
 function buildText(order, { forAdmin = false } = {}) {
-  const lines = order.items.map((i) => {
-    const name = i.packSize ? `${i.name} — ${i.packSize}` : i.name
-    return `${name} x${i.quantity} — ${money(i.price * i.quantity)}`
+  const lines = (order.items || []).map((item) => {
+    const name = item.packSize ? `${item.name} — ${item.packSize}` : item.name
+    return `${name} x${item.quantity} — ${money(Number(item.price) * Number(item.quantity))}`
   })
   return [
     forAdmin ? 'New paid order' : 'Thank you for your order',
@@ -76,43 +101,25 @@ function buildText(order, { forAdmin = false } = {}) {
   ].join('\n')
 }
 
-// Main function called from the orders route after a successful PayPal capture.
-// Sends:
-//   1. A confirmation email to the customer (if we have their email)
-//   2. An alert email to the admin/business owner (CONTACT_RECIPIENT, same as Contact Us)
-//
-// IMPORTANT: this function must NEVER throw in a way that breaks the payment
-// response. Any failure here should only be logged, not surfaced to the buyer.
 async function sendOrderPaidEmails(order, customerEmail) {
   const jobs = []
-
   if (customerEmail) {
-    jobs.push(
-      sendNotification({
-        to: customerEmail,
-        subject: `Order confirmed — ${String(order._id)}`,
-        text: buildText(order),
-        html: buildHtml(order),
-      }),
-    )
+    jobs.push(sendNotification({
+      to: customerEmail,
+      subject: `Order confirmed — ${String(order._id)}`,
+      text: buildText(order),
+      html: buildHtml(order),
+    }))
   }
-
-  // No `to` passed here on purpose — sendNotification already defaults to
-  // process.env.CONTACT_RECIPIENT (same admin inbox used by Contact Us).
-  jobs.push(
-    sendNotification({
-      subject: `New order ${money(order.totalAmount)} — ${order.shippingAddress.fullName}`,
-      text: buildText(order, { forAdmin: true }),
-      html: buildHtml(order, { forAdmin: true }),
-    }),
-  )
-
-  // Promise.allSettled (not Promise.all) so that if ONE email fails
-  // (e.g. bad customer email address), the other one still sends.
+  jobs.push(sendNotification({
+    subject: `New order ${money(order.totalAmount)} — ${order.shippingAddress.fullName}`,
+    text: buildText(order, { forAdmin: true }),
+    html: buildHtml(order, { forAdmin: true }),
+  }))
   const results = await Promise.allSettled(jobs)
   results
-    .filter((r) => r.status === 'rejected')
-    .forEach((r) => console.error('Order email failed:', r.reason?.message))
+    .filter((result) => result.status === 'rejected')
+    .forEach((result) => console.error('Order email failed:', result.reason?.message))
 }
 
 module.exports = { sendOrderPaidEmails }
