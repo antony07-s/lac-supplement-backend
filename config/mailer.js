@@ -101,6 +101,68 @@ function contactThankYouHtml(name, subject) {
 </html>`
 }
 
+function contactAdminAlertHtml(name, email, subject, message) {
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+  const escapedEmail = escapeHtml(email)
+  const escapedMessage = escapeHtml(message).replace(/\r?\n/g, '<br>')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New contact form message</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(20,37,63,.08);">
+          <tr>
+            <td style="background:#123f7a;padding:28px 36px;text-align:center;">
+              <span style="color:#ffffff;font-size:24px;font-weight:700;letter-spacing:.4px;">AYUSYDAH<span style="color:#d7ac54;">.</span></span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 36px 28px;">
+              <h1 style="margin:0 0 24px;font-size:24px;line-height:32px;color:#182235;">New contact form message</h1>
+
+              <div style="margin:0 0 18px;background:#f3f6fc;border:1px solid #dce5f4;border-radius:12px;padding:18px 20px;">
+                <span style="display:block;margin-bottom:6px;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.6px;">From</span>
+                <span style="display:block;color:#182235;font-size:15px;line-height:23px;font-weight:700;">${escapeHtml(name)}</span>
+                <a href="mailto:${escapedEmail}" style="display:inline-block;margin-top:3px;color:#123f7a;font-size:14px;line-height:21px;text-decoration:none;">${escapedEmail}</a>
+              </div>
+
+              <div style="margin:0 0 18px;">
+                <span style="display:block;margin-bottom:6px;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.6px;">Subject</span>
+                <span style="display:block;color:#182235;font-size:15px;line-height:23px;font-weight:700;">${escapeHtml(subject)}</span>
+              </div>
+
+              <div style="border-top:1px solid #edf0f5;padding-top:20px;">
+                <span style="display:block;margin-bottom:8px;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.6px;">Message</span>
+                <div style="color:#3f4a5a;font-size:15px;line-height:24px;word-break:break-word;">${escapedMessage}</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-top:1px solid #edf0f5;padding:20px 36px;color:#8791a1;font-size:12px;line-height:18px;text-align:center;">
+              &copy; ${new Date().getFullYear()} AYUSYDAH. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 async function sendNotification({ subject, text, html, replyTo, to }) {
   if (!process.env.RESEND_API_KEY) {
     const error = new Error('Email service is not configured')
@@ -148,4 +210,10 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
 
 const isConfigured = Boolean(process.env.RESEND_API_KEY)
 
-module.exports = { sendNotification, verificationEmailHtml, contactThankYouHtml, isConfigured }
+module.exports = {
+  sendNotification,
+  verificationEmailHtml,
+  contactThankYouHtml,
+  contactAdminAlertHtml,
+  isConfigured,
+}
