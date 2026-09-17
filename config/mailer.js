@@ -51,6 +51,56 @@ function verificationEmailHtml(code) {
 </body></html>`
 }
 
+function contactThankYouHtml(name, subject) {
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>We received your message</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(20,37,63,.08);">
+          <tr>
+            <td style="background:#123f7a;padding:28px 36px;text-align:center;">
+              <span style="color:#ffffff;font-size:24px;font-weight:700;letter-spacing:.4px;">AYUSYDAH<span style="color:#d7ac54;">.</span></span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 36px 28px;">
+              <h1 style="margin:0 0 12px;font-size:24px;line-height:32px;color:#182235;">Thank you for contacting us</h1>
+              <p style="margin:0;color:#5c6677;font-size:15px;line-height:24px;">Hi ${escapeHtml(name)},</p>
+              <p style="margin:16px 0 0;color:#5c6677;font-size:15px;line-height:24px;">We have received your message and our team will respond as soon as possible.</p>
+              <div style="margin:24px 0;background:#f3f6fc;border:1px solid #dce5f4;border-radius:12px;padding:18px 20px;">
+                <span style="display:block;margin-bottom:6px;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.6px;">Your subject</span>
+                <span style="display:block;color:#182235;font-size:15px;line-height:23px;font-weight:700;">&ldquo;${escapeHtml(subject)}&rdquo;</span>
+              </div>
+              <p style="margin:0;color:#5c6677;font-size:14px;line-height:22px;">Thank you for getting in touch with AYUSYDAH.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-top:1px solid #edf0f5;padding:20px 36px;color:#8791a1;font-size:12px;line-height:18px;text-align:center;">
+              &copy; ${new Date().getFullYear()} AYUSYDAH. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 async function sendNotification({ subject, text, html, replyTo, to }) {
   if (!process.env.RESEND_API_KEY) {
     const error = new Error('Email service is not configured')
@@ -59,7 +109,10 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
   }
 
   const configuredRecipient = process.env.CONTACT_RECIPIENT?.trim()
-  const recipient = to || configuredRecipient || 'antony.s8637@gmail.com'
+  const recipient = String(to || configuredRecipient || 'antony.s8637@gmail.com')
+    .split(',')
+    .map((email) => email.trim())
+    .filter(Boolean)
 
   if (!to && !configuredRecipient) {
     console.error(
@@ -95,4 +148,4 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
 
 const isConfigured = Boolean(process.env.RESEND_API_KEY)
 
-module.exports = { sendNotification, verificationEmailHtml, isConfigured }
+module.exports = { sendNotification, verificationEmailHtml, contactThankYouHtml, isConfigured }

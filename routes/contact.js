@@ -4,7 +4,7 @@ const router = express.Router()
 const contactLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many messages sent. Please try again later.' } })
 const crypto = require('crypto')
 const Message = require('../models/Message')
-const { sendNotification } = require('../config/mailer')
+const { sendNotification, contactThankYouHtml } = require('../config/mailer')
 
 router.post('/', contactLimiter, async (req, res) => {
   try {
@@ -27,6 +27,13 @@ router.post('/', contactLimiter, async (req, res) => {
       subject: `New contact form message: ${subject || 'No subject'}`,
       text: `From: ${name} (${email})\n\n${message}`,
     }).catch((error) => console.error('Contact notification failed:', error.message))
+
+    void sendNotification({
+      to: email,
+      subject: 'We received your message — AYUSYDAH',
+      text: `Hi ${name},\n\nThank you for contacting AYUSYDAH. We received your message about "${subject}" and our team will respond soon.\n\nKind regards,\nAYUSYDAH`,
+      html: contactThankYouHtml(name, subject),
+    }).catch((error) => console.error('Contact thank-you email failed:', error.message))
 
     res.status(201).json({ message: 'Message sent', id: saved._id })
   } catch (err) {
