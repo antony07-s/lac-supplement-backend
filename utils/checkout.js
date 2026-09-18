@@ -24,8 +24,8 @@ function calculateDiscount(subtotalSen) {
   if (subtotalSen < thresholdSen) return 0
   const type = (process.env.DISCOUNT_ABOVE_1000_TYPE || 'amount').toLowerCase()
   const value = configuredNumber('DISCOUNT_ABOVE_1000')
-  if (type === 'percentage') return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
-  if (type !== 'amount') throw Object.assign(new Error('DISCOUNT_ABOVE_1000_TYPE must be amount or percentage'), { status: 503 })
+  if (type === 'percent' || type === 'percentage') return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  if (type !== 'amount') throw Object.assign(new Error('DISCOUNT_ABOVE_1000_TYPE must be amount or percent'), { status: 503 })
   return Math.min(subtotalSen, moneyToSen(value))
 }
 
