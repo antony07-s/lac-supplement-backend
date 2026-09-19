@@ -17,4 +17,4 @@ This catalog uses the product descriptions and listed benefits as the source of 
 | Liver Health | Liver |
 | Metabolic Health | Liver, Fat Burn Plus UltraSlim, Thyroid Support, Prediacare, Fenugreek Extract |
 
-`Eyerevive-t` has no usable description or benefits in the live catalog. It is moved to Beauty & Hair but deliberately receives no health goal until its product information is completed. Tooth & Gum Care remains in Health Concerns and likewise receives no invented health-goal label.
+`Eyerevive-t` has no usable description or benefits in the live catalog. It is moved to Skin & Hair Care but deliberately receives no health goal until its product information is completed. Tooth & Gum Care remains in Herbal Supplements and likewise receives no invented health-goal label.

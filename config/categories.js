@@ -1,9 +1,10 @@
 const CATEGORY_ALIASES = {
-  'Health Concerns': ['Health Concerns', 'Vitamins & Supplements', 'Protein & Fitness', 'Wellness', 'Sports Nutrition'],
-  Ayurveda: ['Ayurveda'],
-  'Beauty & Hair': ['Beauty & Hair', 'Beauty & Slimming'],
-  'Food & Nutrition': ['Food & Nutrition', 'Food'],
-  'Nutrition & Juices': ['Nutrition & Juices'],
+  // Keep legacy values here so bookmarked category URLs and any un-migrated
+  // product records continue to resolve to their new customer-facing category.
+  'Herbal Supplements': ['Herbal Supplements', 'Health Concerns', 'Vitamins & Supplements', 'Protein & Fitness', 'Wellness', 'Sports Nutrition', 'Food & Nutrition', 'Food'],
+  'Ayurvedic Wellness': ['Ayurvedic Wellness', 'Ayurveda'],
+  Juices: ['Juices', 'Nutrition & Juices'],
+  'Skin & Hair Care': ['Skin & Hair Care', 'Beauty & Hair', 'Beauty & Slimming'],
   Brands: ['Brands'],
 }
 
