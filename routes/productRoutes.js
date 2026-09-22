@@ -52,6 +52,7 @@ const productPayload = (body) => ({
   description: String(body.description || '').trim(),
   videoUrl: videoUrl(body.videoUrl),
   videoPublicId: String(body.videoPublicId || '').trim(),
+  bestSeller: body.bestSeller === true,
   category: canonicalCategory(body.category),
   healthGoals: [...new Set((Array.isArray(body.healthGoals) ? body.healthGoals : [])
     .map((goal) => String(goal || '').trim())
@@ -81,6 +82,7 @@ router.get('/', async (req, res, next) => {
     const query = {}
     if (req.query.category) query.category = { $in: categoryValues(req.query.category) }
     if (req.query.healthGoal) query.healthGoals = String(req.query.healthGoal).trim()
+    if (req.query.bestSeller === 'true') query.bestSeller = true
     if (req.query.search) {
       const term = String(req.query.search).trim().slice(0, 100)
       if (term) query.$or = [{ name: { $regex: term, $options: 'i' } }, { description: { $regex: term, $options: 'i' } }]

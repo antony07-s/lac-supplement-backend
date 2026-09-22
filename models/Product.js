@@ -18,6 +18,8 @@ const productSchema = new mongoose.Schema({
   image: { type: String, trim: true, default: '' },
   rating: { type: Number, default: 0, min: 0, max: 5 },
   reviews: { type: Number, default: 0, min: 0 },
+  // Explicitly curated by an administrator for the homepage collection.
+  bestSeller: { type: Boolean, default: false, index: true },
   stock: { type: Number, min: 0 },
   // Kilograms. Required for a shipping-enabled checkout; existing catalogue
   // records must be populated by an administrator before sale.
@@ -33,5 +35,6 @@ const productSchema = new mongoose.Schema({
 
 productSchema.index({ category: 1, createdAt: -1 })
 productSchema.index({ healthGoals: 1, createdAt: -1 })
+productSchema.index({ bestSeller: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Product', productSchema)
