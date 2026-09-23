@@ -101,6 +101,70 @@ function buildText(order, { forAdmin = false } = {}) {
   ].join('\n')
 }
 
+function buildShippedHtml(order) {
+  const orderId = escapeHtml(order._id)
+  const courier = escapeHtml(order.courierName)
+  const tracking = escapeHtml(order.trackingNumber)
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your order has shipped</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#f5f7fb;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(20,37,63,.08);">
+        <tr><td style="background:#123f7a;padding:28px 36px;text-align:center;"><span style="color:#ffffff;font-size:24px;font-weight:700;letter-spacing:.4px;">AYUSYDAH<span style="color:#d7ac54;">.</span></span></td></tr>
+        <tr><td style="padding:36px 36px 28px;">
+          <h1 style="margin:0 0 12px;font-size:24px;line-height:32px;color:#182235;">Your order is on its way</h1>
+          <p style="margin:0;color:#5c6677;font-size:15px;line-height:24px;">Good news — your order has been shipped and is heading to you.</p>
+          <div style="margin:28px 0 20px;background:#f3f6fc;border:1px solid #dce5f4;border-radius:12px;padding:16px 20px;">
+            <span style="display:block;color:#5c6677;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.7px;">Order ID</span>
+            <span style="display:block;margin-top:4px;color:#123f7a;font-size:15px;line-height:22px;font-weight:700;word-break:break-all;">${orderId}</span>
+          </div>
+          <div style="margin:0 0 20px;background:#eef7f0;border:1px solid #cfe8d4;border-radius:12px;padding:16px 20px;">
+            <span style="display:block;color:#2f6e3f;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.7px;">Courier</span>
+            <span style="display:block;margin-top:4px;color:#1f4a2a;font-size:15px;line-height:22px;font-weight:700;">${courier}</span>
+            <span style="display:block;margin-top:12px;color:#2f6e3f;font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.7px;">Tracking Number</span>
+            <span style="display:block;margin-top:4px;color:#1f4a2a;font-size:15px;line-height:22px;font-weight:700;word-break:break-all;">${tracking}</span>
+          </div>
+          <p style="margin:24px 0 0;color:#5c6677;font-size:14px;line-height:22px;">Please check with the courier directly using the tracking number above for live delivery updates.</p>
+        </td></tr>
+        <tr><td style="border-top:1px solid #edf0f5;padding:20px 36px;color:#8791a1;font-size:12px;line-height:18px;text-align:center;">&copy; ${new Date().getFullYear()} AYUSYDAH. All rights reserved.</td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+}
+
+function buildShippedText(order) {
+  return [
+    'Your order is on its way',
+    `Order ID: ${String(order._id)}`,
+    '',
+    `Courier: ${order.courierName}`,
+    `Tracking Number: ${order.trackingNumber}`,
+  ].join('\n')
+}
+
+async function sendOrderShippedEmail(order, customerEmail) {
+  if (!customerEmail) return
+  try {
+    await sendNotification({
+      to: customerEmail,
+      subject: `Your order has shipped — ${String(order._id)}`,
+      text: buildShippedText(order),
+      html: buildShippedHtml(order),
+    })
+  } catch (err) {
+    console.error('Shipped email failed:', err.message)
+  }
+}
+
 async function sendOrderPaidEmails(order, customerEmail) {
   const jobs = []
   if (customerEmail) {
@@ -122,4 +186,4 @@ async function sendOrderPaidEmails(order, customerEmail) {
     .forEach((result) => console.error('Order email failed:', result.reason?.message))
 }
 
-module.exports = { sendOrderPaidEmails }
+module.exports = { sendOrderPaidEmails, sendOrderShippedEmail }

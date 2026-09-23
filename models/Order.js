@@ -37,7 +37,10 @@ const orderSchema = new mongoose.Schema({
     paymentProvider: { type: String, enum: ['paypal'] },
     stockReserved: { type: Boolean, default: true },
     status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered'], default: 'pending' },
+    courierName: { type: String, trim: true, default: null },
+    trackingNumber: { type: String, trim: true, default: null },
 }, { timestamps: true })
+
 
 orderSchema.index({ user: 1, createdAt: -1 })
 

@@ -8,7 +8,7 @@ const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
-const { sendOrderPaidEmails } = require('../utils/notify')
+const { sendOrderPaidEmails, sendOrderShippedEmail } = require('../utils/notify')
 
 
 function cleanAddress(address) {
@@ -436,7 +436,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.put('/:id/status', protect, adminOnly, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
-    const { status } = req.body
+    const { status, courierName, trackingNumber } = req.body
     if (!['shipped', 'delivered'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })
     }
@@ -447,9 +447,32 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     if ((status === 'shipped' && order.status !== 'paid') || (status === 'delivered' && order.status !== 'shipped')) {
       return res.status(409).json({ message: 'Order status transition is not allowed' })
     }
+
+    if (status === 'shipped') {
+      const cleanCourier = String(courierName || '').trim()
+      const cleanTracking = String(trackingNumber || '').trim()
+      if (!cleanCourier || !cleanTracking || cleanTracking.length > 60) {
+        return res.status(400).json({ message: 'Courier name and tracking number are required' })
+      }
+      order.courierName = cleanCourier
+      order.trackingNumber = cleanTracking
+    }
+
     order.status = status
     await order.save()
     res.json(order)
+
+    // Fire-and-forget shipped-notification email, same pattern used for
+    // the PayPal capture email in this file — never blocks the response.
+    if (status === 'shipped') {
+      User.findById(order.user)
+        .select('email')
+        .lean()
+        .then((buyer) => {
+          if (buyer?.email) return sendOrderShippedEmail(order, buyer.email)
+        })
+        .catch((err) => console.error('Shipped notification error:', err.message))
+    }
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
