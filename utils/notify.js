@@ -165,6 +165,21 @@ async function sendOrderShippedEmail(order, customerEmail) {
   }
 }
 
+async function sendOrderDeliveredEmail(order, customerEmail) {
+  if (!customerEmail) return
+  try {
+    const orderId = escapeHtml(order._id)
+    await sendNotification({
+      to: customerEmail,
+      subject: `Your order has been delivered — ${String(order._id)}`,
+      text: `Your order has been delivered.\n\nOrder ID: ${String(order._id)}\n\nThank you for choosing AYUSYDAH.`,
+      html: `<!doctype html><html lang="en"><body style="margin:0;padding:32px 16px;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;"><table role="presentation" width="100%"><tr><td align="center"><table role="presentation" width="100%" style="max-width:600px;background:#fff;border-radius:16px;"><tr><td style="background:#123f7a;padding:28px 36px;text-align:center;color:#fff;font-size:24px;font-weight:700;">AYUSYDAH</td></tr><tr><td style="padding:36px;"><h1 style="margin:0 0 12px;font-size:24px;">Your order has been delivered</h1><p style="color:#5c6677;line-height:24px;">Your order has arrived. Thank you for choosing AYUSYDAH.</p><p style="margin-top:24px;padding:14px 16px;background:#f3f6fc;border-radius:10px;color:#123f7a;font-weight:700;word-break:break-all;">Order ID: ${orderId}</p></td></tr></table></td></tr></table></body></html>`,
+    })
+  } catch (err) {
+    console.error('Delivered email failed:', err.message)
+  }
+}
+
 async function sendOrderPaidEmails(order, customerEmail) {
   const jobs = []
   if (customerEmail) {
@@ -186,4 +201,4 @@ async function sendOrderPaidEmails(order, customerEmail) {
     .forEach((result) => console.error('Order email failed:', result.reason?.message))
 }
 
-module.exports = { sendOrderPaidEmails, sendOrderShippedEmail }
+module.exports = { sendOrderPaidEmails, sendOrderShippedEmail, sendOrderDeliveredEmail }

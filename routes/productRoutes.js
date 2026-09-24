@@ -87,8 +87,15 @@ router.get('/', async (req, res, next) => {
       const term = String(req.query.search).trim().slice(0, 100)
       if (term) query.$or = [{ name: { $regex: term, $options: 'i' } }, { description: { $regex: term, $options: 'i' } }]
     }
+    const sortOptions = {
+      newest: { createdAt: -1 },
+      'price-asc': { price: 1, _id: 1 },
+      'price-desc': { price: -1, _id: 1 },
+      name: { name: 1, _id: 1 },
+    }
+    const sort = sortOptions[String(req.query.sort || 'newest')] || sortOptions.newest
     const [products, total] = await Promise.all([
-      Product.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      Product.find(query).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
       Product.countDocuments(query),
     ])
     res.json({ products: products.map((product) => ({ ...product, category: canonicalCategory(product.category) })), page, limit, total })

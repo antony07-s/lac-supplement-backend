@@ -8,7 +8,7 @@ const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
-const { sendOrderPaidEmails, sendOrderShippedEmail } = require('../utils/notify')
+const { sendOrderPaidEmails, sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
 
 
 function cleanAddress(address) {
@@ -456,7 +456,10 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
       }
       order.courierName = cleanCourier
       order.trackingNumber = cleanTracking
+      order.shippedAt = new Date()
     }
+
+    if (status === 'delivered') order.deliveredAt = new Date()
 
     order.status = status
     await order.save()
@@ -472,6 +475,15 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
           if (buyer?.email) return sendOrderShippedEmail(order, buyer.email)
         })
         .catch((err) => console.error('Shipped notification error:', err.message))
+    }
+    if (status === 'delivered') {
+      User.findById(order.user)
+        .select('email')
+        .lean()
+        .then((buyer) => {
+          if (buyer?.email) return sendOrderDeliveredEmail(order, buyer.email)
+        })
+        .catch((err) => console.error('Delivered notification error:', err.message))
     }
   } catch (err) {
     res.status(500).json({ message: err.message })
