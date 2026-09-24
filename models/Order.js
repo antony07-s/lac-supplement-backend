@@ -1,4 +1,4 @@
-const mongoose = require('mongoose')
+﻿const mongoose = require('mongoose')
 
 const orderSchema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -34,7 +34,10 @@ const orderSchema = new mongoose.Schema({
     paypalOrderId: { type: String, trim: true, unique: true, sparse: true },
     paypalCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
     paypalCaptureId: { type: String, trim: true, unique: true, sparse: true },
-    paymentProvider: { type: String, enum: ['paypal'] },
+    razorpayOrderId: { type: String, trim: true, unique: true, sparse: true },
+    razorpayCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
+    razorpayPaymentId: { type: String, trim: true, unique: true, sparse: true },
+    paymentProvider: { type: String, enum: ['paypal', 'razorpay'] },
     stockReserved: { type: Boolean, default: true },
     status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered'], default: 'pending' },
     courierName: { type: String, trim: true, default: null },
@@ -51,3 +54,5 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ user: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Order', orderSchema)
+
+

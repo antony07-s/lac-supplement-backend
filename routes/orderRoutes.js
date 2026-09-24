@@ -73,6 +73,11 @@ router.post('/', protect, async (req, res) => {
     await session.withTransaction(async () => {
       const existing = await Order.findOne({ clientRequestId }).session(session)
       if (existing) {
+        // Idempotency keys are client supplied. Never return another buyer's
+        // order if an improbable key collision (or a malicious replay) occurs.
+        if (String(existing.user) !== req.userId) {
+          throw Object.assign(new Error('This checkout request conflicts with an existing order'), { status: 409 })
+        }
         savedOrder = existing
         wasDuplicate = true
         return
@@ -233,6 +238,9 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
     if (order.status !== 'pending') {
       return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
     }
+    if (order.razorpayOrderId || (order.paymentProvider && order.paymentProvider !== 'paypal')) {
+      return res.status(409).json({ message: 'A different payment method has already been started for this order.' })
+    }
     if (order.paypalOrderId) return res.json({ orderId: order.paypalOrderId })
 
     // Persist PayPal's idempotency key before contacting it. Retries (including
@@ -240,7 +248,7 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
     let requestId = order.paypalCreateRequestId
     if (!requestId) {
       const claimed = await Order.findOneAndUpdate(
-        { _id: order._id, status: 'pending', paypalCreateRequestId: { $exists: false } },
+        { _id: order._id, status: 'pending', paypalCreateRequestId: { $exists: false }, paymentProvider: { $in: [null, 'paypal'] } },
         { $set: { paypalCreateRequestId: randomUUID(), paymentProvider: 'paypal' } },
         { new: true },
       )
