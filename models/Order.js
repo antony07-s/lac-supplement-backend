@@ -41,6 +41,10 @@ const orderSchema = new mongoose.Schema({
     trackingNumber: { type: String, trim: true, default: null },
     shippedAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
+    fulfilmentNote: { type: String, trim: true, maxlength: 1000, default: '' },
+    shipmentEmailStatus: { type: String, enum: ['not-sent', 'sent', 'failed'], default: 'not-sent' },
+    shipmentEmailSentAt: { type: Date, default: null },
+    shipmentEmailLastError: { type: String, trim: true, maxlength: 500, default: '' },
 }, { timestamps: true })
 
 

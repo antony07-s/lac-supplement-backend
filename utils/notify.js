@@ -152,7 +152,7 @@ function buildShippedText(order) {
 }
 
 async function sendOrderShippedEmail(order, customerEmail) {
-  if (!customerEmail) return
+  if (!customerEmail) return { ok: false, error: 'Customer email is unavailable' }
   try {
     await sendNotification({
       to: customerEmail,
@@ -160,8 +160,10 @@ async function sendOrderShippedEmail(order, customerEmail) {
       text: buildShippedText(order),
       html: buildShippedHtml(order),
     })
+    return { ok: true }
   } catch (err) {
     console.error('Shipped email failed:', err.message)
+    return { ok: false, error: err.message }
   }
 }
 

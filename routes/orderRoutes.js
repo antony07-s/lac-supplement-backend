@@ -10,6 +10,16 @@ const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
 const { sendOrderPaidEmails, sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
 
+async function recordShipmentEmail(order) {
+  const buyer = await User.findById(order.user).select('email').lean()
+  const result = await sendOrderShippedEmail(order, buyer?.email)
+  order.shipmentEmailStatus = result.ok ? 'sent' : 'failed'
+  order.shipmentEmailSentAt = result.ok ? new Date() : null
+  order.shipmentEmailLastError = result.ok ? '' : String(result.error || 'Unable to send shipment email').slice(0, 500)
+  await order.save()
+  return result
+}
+
 
 function cleanAddress(address) {
   const fields = ['fullName', 'phone', 'addressLine1', 'addressLine2', 'city', 'state', 'postcode']
@@ -436,7 +446,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.put('/:id/status', protect, adminOnly, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
-    const { status, courierName, trackingNumber } = req.body
+    const { status, courierName, trackingNumber, fulfilmentNote } = req.body
     if (!['shipped', 'delivered'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })
     }
@@ -457,6 +467,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
       order.courierName = cleanCourier
       order.trackingNumber = cleanTracking
       order.shippedAt = new Date()
+      order.fulfilmentNote = String(fulfilmentNote || '').trim().slice(0, 1000)
     }
 
     if (status === 'delivered') order.deliveredAt = new Date()
@@ -468,12 +479,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     // Fire-and-forget shipped-notification email, same pattern used for
     // the PayPal capture email in this file — never blocks the response.
     if (status === 'shipped') {
-      User.findById(order.user)
-        .select('email')
-        .lean()
-        .then((buyer) => {
-          if (buyer?.email) return sendOrderShippedEmail(order, buyer.email)
-        })
+      recordShipmentEmail(order)
         .catch((err) => console.error('Shipped notification error:', err.message))
     }
     if (status === 'delivered') {
@@ -487,6 +493,20 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ message: err.message })
+  }
+})
+
+router.post('/:id/shipment-email/retry', protect, adminOnly, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (!['shipped', 'delivered'].includes(order.status)) return res.status(409).json({ message: 'Only shipped orders can receive a shipment email' })
+    const result = await recordShipmentEmail(order)
+    if (!result.ok) return res.status(502).json({ message: 'Shipment email could not be sent', detail: order.shipmentEmailLastError })
+    res.json({ shipmentEmailStatus: order.shipmentEmailStatus, shipmentEmailSentAt: order.shipmentEmailSentAt })
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to retry shipment email' })
   }
 })
 

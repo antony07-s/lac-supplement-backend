@@ -25,9 +25,9 @@ const paypalWebhookRoutes = require('./routes/paypalWebhook')
 
 const app = express()
 
-const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:5173,https://lac-supplement-store.vercel.app')
+const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:5173,http://localhost:4173,https://ayusydah.com,https://www.ayusydah.com')
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/$/, ''))
   .filter(Boolean)
 
 if (!process.env.MONGO_URI || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
@@ -38,7 +38,8 @@ if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+    const normalizedOrigin = String(origin || '').replace(/\/$/, '')
+    if (!origin || allowedOrigins.includes(normalizedOrigin)) return callback(null, true)
     return callback(new Error('Origin not allowed by CORS'))
   },
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
