@@ -29,12 +29,14 @@ function calculateDiscount(subtotalSen) {
   return Math.min(subtotalSen, moneyToSen(value))
 }
 
-function calculateCheckout({ items, state }) {
+function calculateCheckout({ items, state, country = 'Malaysia' }) {
   const subtotalSen = items.reduce((total, item) => total + moneyToSen(item.price) * item.quantity, 0)
   const totalWeightKg = items.reduce((total, item) => total + Number(item.weightKg) * item.quantity, 0)
   if (!Number.isFinite(totalWeightKg) || totalWeightKg <= 0) {
     throw Object.assign(new Error('Every product needs a valid shipping weight before it can be checked out'), { status: 409 })
   }
+  // TODO: needs India shipping rate rules from client
+  if (country === 'India') throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
   const shippingRegion = EAST_MALAYSIA_STATES.has(state) ? 'east-malaysia' : 'west-malaysia'
   const rate = configuredNumber(shippingRegion === 'east-malaysia' ? 'EAST_MALAYSIA_SHIPPING_RATE_PER_KG' : 'WEST_MALAYSIA_SHIPPING_RATE_PER_KG')
   const discountSen = calculateDiscount(subtotalSen)

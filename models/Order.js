@@ -23,13 +23,14 @@ const orderSchema = new mongoose.Schema({
         city: { type: String, required: true },
         state: { type: String, required: true },
         postcode: { type: String, required: true },
+        country: { type: String, enum: ['Malaysia', 'India'], default: 'Malaysia' },
     },
     totalAmount: { type: Number, required: true, min: 0 },
     subtotal: { type: Number, min: 0, default: 0 },
     discount: { type: Number, required: true, min: 0, default: 0 },
     shipping: { type: Number, required: true, min: 0, default: 0 },
     totalWeightKg: { type: Number, min: 0, default: 0 },
-    shippingRegion: { type: String, enum: ['west-malaysia', 'east-malaysia'] },
+    shippingRegion: { type: String, enum: ['west-malaysia', 'east-malaysia', 'india'] },
     clientRequestId: { type: String, trim: true, maxlength: 100, unique: true, sparse: true },
     paypalOrderId: { type: String, trim: true, unique: true, sparse: true },
     paypalCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
@@ -54,5 +55,4 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ user: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Order', orderSchema)
-
 

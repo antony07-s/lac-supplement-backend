@@ -22,12 +22,14 @@ async function recordShipmentEmail(order) {
 
 
 function cleanAddress(address) {
-  const fields = ['fullName', 'phone', 'addressLine1', 'addressLine2', 'city', 'state', 'postcode']
+  const fields = ['fullName', 'phone', 'addressLine1', 'addressLine2', 'city', 'state', 'postcode', 'country']
   const cleaned = Object.fromEntries(fields.map((field) => [field, String(address?.[field] || '').trim()]))
+  cleaned.country ||= 'Malaysia'
   const missing = ['fullName', 'phone', 'addressLine1', 'city', 'state', 'postcode'].find((field) => !cleaned[field])
   if (missing) throw Object.assign(new Error(`Shipping address is missing: ${missing}`), { status: 400 })
   if (Object.values(cleaned).some((value) => value.length > 200)) throw Object.assign(new Error('Shipping address contains an invalid value'), { status: 400 })
-  if (!/^\d{5}$/.test(cleaned.postcode)) throw Object.assign(new Error('Enter a valid Malaysian 5-digit postcode'), { status: 400 })
+  const validPostcode = cleaned.country === 'India' ? /^\d{6}$/.test(cleaned.postcode) : cleaned.country === 'Malaysia' && /^\d{5}$/.test(cleaned.postcode)
+  if (!validPostcode) throw Object.assign(new Error('Enter a valid postcode for the selected country'), { status: 400 })
   if (!/^[+\d()\-\s]{7,25}$/.test(cleaned.phone)) throw Object.assign(new Error('Enter a valid phone number'), { status: 400 })
   return cleaned
 }
@@ -129,7 +131,7 @@ router.post('/', protect, async (req, res) => {
         })
       }
 
-      const checkout = calculateCheckout({ items: verifiedItems, state: address.state })
+      const checkout = calculateCheckout({ items: verifiedItems, state: address.state, country: address.country })
 
       ;[savedOrder] = await Order.create([{
         user: req.userId,
@@ -155,7 +157,7 @@ router.post('/quote', protect, async (req, res) => {
   try {
     const address = cleanAddress(req.body.shippingAddress)
     const verified = await verifyItems(req.body.items)
-    res.json(calculateCheckout({ items: verified.map((entry) => entry.orderItem), state: address.state }))
+    res.json(calculateCheckout({ items: verified.map((entry) => entry.orderItem), state: address.state, country: address.country }))
   } catch (err) {
     res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to calculate checkout total' })
   }
@@ -194,7 +196,7 @@ router.post('/:id/checkout-session', protect, async (req, res) => {
       line_items: order.items.slice(0, 1).map((item) => ({
         quantity: 1,
         price_data: {
-          currency: 'myr',
+          currency: 'MYR',
           unit_amount: moneyToSen(order.totalAmount),
           product_data: {
             name: item.packSize ? `${item.name} — ${item.packSize}` : item.name,
