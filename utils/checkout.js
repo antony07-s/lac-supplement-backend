@@ -29,14 +29,35 @@ function calculateDiscount(subtotalSen) {
   return Math.min(subtotalSen, moneyToSen(value))
 }
 
+function calculateIndiaDiscount(subtotalSen) {
+  const thresholdSen = moneyToSen(process.env.INDIA_DISCOUNT_ABOVE_1000_THRESHOLD || 1000)
+  if (subtotalSen < thresholdSen) return 0
+  const type = (process.env.INDIA_DISCOUNT_ABOVE_1000_TYPE || 'amount').toLowerCase()
+  const value = configuredNumber('INDIA_DISCOUNT_ABOVE_1000')
+  if (type === 'percent' || type === 'percentage') return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  if (type !== 'amount') throw Object.assign(new Error('INDIA_DISCOUNT_ABOVE_1000_TYPE must be amount or percent'), { status: 503 })
+  return Math.min(subtotalSen, moneyToSen(value))
+}
+
 function calculateCheckout({ items, state, country = 'Malaysia' }) {
   const subtotalSen = items.reduce((total, item) => total + moneyToSen(item.price) * item.quantity, 0)
   const totalWeightKg = items.reduce((total, item) => total + Number(item.weightKg) * item.quantity, 0)
   if (!Number.isFinite(totalWeightKg) || totalWeightKg <= 0) {
     throw Object.assign(new Error('Every product needs a valid shipping weight before it can be checked out'), { status: 409 })
   }
-  // TODO: needs India shipping rate rules from client
-  if (country === 'India') throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+  if (country === 'India') {
+    if (process.env.INDIA_SHIPPING_ENABLED !== 'true') {
+      throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+    }
+    const rate = configuredNumber('INDIA_SHIPPING_RATE_PER_KG')
+    const discountSen = calculateIndiaDiscount(subtotalSen)
+    const shippingSen = moneyToSen(totalWeightKg * rate)
+    const totalSen = subtotalSen - discountSen + shippingSen
+    return {
+      subtotal: senToMoney(subtotalSen), discount: senToMoney(discountSen), shipping: senToMoney(shippingSen),
+      totalAmount: senToMoney(totalSen), totalWeightKg: Number(totalWeightKg.toFixed(3)), shippingRegion: 'india',
+    }
+  }
   const shippingRegion = EAST_MALAYSIA_STATES.has(state) ? 'east-malaysia' : 'west-malaysia'
   const rate = configuredNumber(shippingRegion === 'east-malaysia' ? 'EAST_MALAYSIA_SHIPPING_RATE_PER_KG' : 'WEST_MALAYSIA_SHIPPING_RATE_PER_KG')
   const discountSen = calculateDiscount(subtotalSen)
