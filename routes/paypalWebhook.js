@@ -23,10 +23,13 @@ router.post('/', express.json({ limit: '100kb' }), async (req, res) => {
     if (req.body.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
       const capture = req.body.resource || {}
       const paypalOrderId = capture.supplementary_data?.related_ids?.order_id
-      const order = await Order.findOne({ paypalOrderId, status: 'pending' })
+      const order = await Order.findOne({ paypalOrderId })
       if (order && capture.status === 'COMPLETED' && capture.amount?.currency_code === 'MYR' && moneyToSen(capture.amount.value) === moneyToSen(order.totalAmount)) {
-        order.status = 'paid'; order.paypalCaptureId = capture.id; order.paymentProvider = 'paypal'
-        await order.save()
+        const updated = await Order.findOneAndUpdate(
+          { _id: order._id, status: 'pending', stockReserved: true, paypalOrderId },
+          { $set: { status: 'paid', paypalCaptureId: capture.id, paymentProvider: 'paypal' } },
+        )
+        if (!updated && order.status !== 'paid') console.error(`PayPal capture ${capture.id} completed after order ${order._id} changed to ${order.status}; reconcile payment manually.`)
       }
     }
     res.json({ received: true })

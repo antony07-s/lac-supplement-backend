@@ -9,6 +9,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
 const { sendOrderPaidEmails, sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
+const { releaseOrderStock, cancelPendingOrder } = require('../utils/orderInventory')
 
 async function recordShipmentEmail(order) {
   const buyer = await User.findById(order.user).select('email').lean()
@@ -36,22 +37,30 @@ function cleanAddress(address) {
 
 async function verifyItems(items, session) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw Object.assign(new Error('No items in order'), { status: 400 })
-  const verified = []
   for (const item of items) {
     if (!mongoose.isValidObjectId(item?.product) || ((item.variant || item.variantId) && !mongoose.isValidObjectId(item.variant || item.variantId))) {
       throw Object.assign(new Error('Invalid product option'), { status: 400 })
     }
     const quantity = Number(item.quantity)
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
-    const query = Product.findById(item.product)
-    if (session) query.session(session)
-    const product = await query
+  }
+  const query = Product.find({ _id: { $in: [...new Set(items.map((item) => String(item.product)))] } })
+  if (session) query.session(session)
+  const products = await query
+  const productsById = new Map(products.map((product) => [String(product._id), product]))
+  const verified = []
+  for (const item of items) {
+    const quantity = Number(item.quantity)
+    const product = productsById.get(String(item.product))
     if (!product) throw Object.assign(new Error('A product in the order was not found'), { status: 400 })
     const variant = (item.variant || item.variantId) ? product.variants.id(item.variant || item.variantId) : null
     if ((item.variant || item.variantId) && !variant) throw Object.assign(new Error(`Selected option for ${product.name} is no longer available`), { status: 409 })
     const sellable = variant || product
-    if ((variant && !variant.isAvailable) || (sellable.stock !== undefined && sellable.stock < quantity)) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
-    const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg ?? process.env.DEFAULT_PRODUCT_WEIGHT_KG ?? 1)
+    if (!Number.isSafeInteger(sellable.stock) || sellable.stock < 0) throw Object.assign(new Error(`${product.name} needs a valid stock quantity for checkout`), { status: 409 })
+    if (sellable.stock < quantity) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
+    if (variant && !variant.isAvailable) throw Object.assign(new Error(`${product.name} is unavailable in the requested quantity`), { status: 409 })
+    const weightKg = Number(sellable.shippingWeightKg)
+    if (!Number.isFinite(weightKg) || weightKg <= 0) throw Object.assign(new Error(`${product.name} needs a valid shipping weight for checkout`), { status: 409 })
     const orderItem = { product: product._id, image: variant?.image || product.image, ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku }), name: product.name, price: sellable.price, weightKg, quantity }
     verified.push({ product, sellable, quantity, orderItem })
   }
@@ -85,51 +94,16 @@ router.post('/', protect, async (req, res) => {
         return
       }
 
-      let totalAmount = 0
       const verifiedItems = []
-
-      for (const item of items) {
-        if (!mongoose.isValidObjectId(item?.product) || ((item.variant || item.variantId) && !mongoose.isValidObjectId(item.variant || item.variantId))) {
-          throw Object.assign(new Error('Invalid product option'), { status: 400 })
-        }
-        const quantity = Number(item.quantity)
-        if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) {
-          throw Object.assign(new Error('Invalid item quantity'), { status: 400 })
-        }
-        const product = await Product.findById(item.product).session(session)
-        if (!product) throw Object.assign(new Error('A product in the order was not found'), { status: 400 })
-        const variantId = item.variant || item.variantId
-        const variant = variantId ? product.variants.id(variantId) : null
-        if (variantId && !variant) throw Object.assign(new Error(`Selected option for ${product.name} is no longer available`), { status: 409 })
-
-        const sellable = variant || product
-        const stock = sellable.stock
-        const weightKg = Number(sellable.shippingWeightKg ?? product.shippingWeightKg ?? process.env.DEFAULT_PRODUCT_WEIGHT_KG ?? 1)
-        if (!Number.isFinite(weightKg) || weightKg <= 0) {
-          throw Object.assign(new Error(`${product.name} needs a valid shipping weight before checkout`), { status: 409 })
-        }
-        if (variant && (!variant.isAvailable || stock < quantity)) {
-          throw Object.assign(new Error(`${product.name} — ${variant.packSize} is unavailable`), { status: 409 })
-        }
-        if (!variant && stock !== undefined && stock < quantity) {
-          throw Object.assign(new Error(`${product.name} does not have enough stock`), { status: 409 })
-        }
-        if (stock !== undefined) {
-          sellable.stock -= quantity
-          await product.save({ session })
-        }
-
-        totalAmount += sellable.price * quantity
-        verifiedItems.push({
-          product: product._id,
-          image: variant?.image || product.image,
-          ...(variant && { variant: variant._id, packSize: variant.packSize, sku: variant.sku }),
-          name: product.name,
-          price: sellable.price,
-          weightKg,
-          quantity,
-        })
+      const verified = await verifyItems(items, session)
+      const productsToSave = new Map()
+      for (const { product, sellable, quantity, orderItem } of verified) {
+        if (sellable.stock < quantity) throw Object.assign(new Error(`${product.name} does not have enough stock`), { status: 409 })
+        sellable.stock -= quantity
+        productsToSave.set(String(product._id), product)
+        verifiedItems.push(orderItem)
       }
+      for (const product of productsToSave.values()) await product.save({ session })
 
       const checkout = calculateCheckout({ items: verifiedItems, state: address.state, country: address.country })
 
@@ -163,68 +137,9 @@ router.post('/quote', protect, async (req, res) => {
   }
 })
 
-// CREATE a Stripe Checkout Session for an existing pending order.
-// The order itself was already created (and stock already reserved) by the
-// route above, so this step only ever handles payment — it never re-checks
-// or re-deducts stock.
-/* Removed Stripe Checkout endpoint.
-router.post('/:id/checkout-session', protect, async (req, res) => {
-  if (!stripe) {
-    return res.status(503).json({ message: 'Online payment is not configured yet.' })
-  }
-  try {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      return res.status(400).json({ message: 'Invalid order ID' })
-    }
-    const order = await Order.findById(req.params.id)
-    if (!order) return res.status(404).json({ message: 'Order not found' })
-    if (String(order.user) !== req.userId) {
-      return res.status(403).json({ message: 'Not authorized to pay for this order' })
-    }
-    if (order.status !== 'pending') {
-      return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
-    }
-
-    const clientUrl = checkoutClientUrl(req)
-
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      customer_email: req.userEmail || undefined,
-      // One server-calculated final-total line prevents shipping and discounts
-      // being omitted from the Stripe charge.
-      line_items: order.items.slice(0, 1).map((item) => ({
-        quantity: 1,
-        price_data: {
-          currency: 'MYR',
-          unit_amount: moneyToSen(order.totalAmount),
-          product_data: {
-            name: item.packSize ? `${item.name} — ${item.packSize}` : item.name,
-          },
-        },
-      })),
-      metadata: { orderId: String(order._id) },
-      success_url: `${clientUrl}/orders/${order._id}?payment=success`,
-      cancel_url: `${clientUrl}/orders/${order._id}?payment=cancelled`,
-    }, { idempotencyKey: `checkout-order-${order._id}` })
-
-    await Order.findOneAndUpdate(
-      { _id: order._id, status: 'pending' },
-      { $set: { stripeCheckoutSessionId: checkoutSession.id, paymentProvider: 'stripe' } },
-    )
-
-    res.json({ url: checkoutSession.url })
-  } catch (err) {
-    console.error('Stripe checkout session error:', err.message)
-    res.status(500).json({ message: 'Unable to start payment. Please try again.' })
-  }
-})
-
-*/
 // CREATE a PayPal Order for an existing pending order.
-// Mirrors the Stripe checkout-session route above — the order/stock is
-// already handled by the POST / route, this only ever deals with payment.
-// Unlike Stripe, PayPal does not return a redirect URL here: the frontend
+// The order and stock reservation are already handled by the POST / route.
+// Unlike a redirect checkout, PayPal returns an order ID for the frontend
 // uses this orderId with PayPal's JS SDK to render the buyer approval flow,
 // then calls the capture route (added separately) once approved.
 router.post('/:id/paypal-order', protect, async (req, res) => {
@@ -298,10 +213,8 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
 })
 
 // CAPTURE a PayPal payment after the buyer approves it on the frontend.
-// PayPal splits payment into two steps: create order (above) -> buyer
-// approves on PayPal's UI -> capture (this route), which actually moves
-// the money. Stripe does this in one step behind its own hosted page;
-// this is PayPal's equivalent of what the Stripe webhook confirms.
+// PayPal splits payment into two steps: create order, then capture after
+// buyer approval. This route verifies the completed capture with PayPal.
 router.post('/:id/paypal-capture', protect, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
@@ -352,22 +265,28 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     const capture = captureData.purchase_units?.[0]?.payments?.captures?.[0]
     const isCompleted = captureData.status === 'COMPLETED' && capture?.status === 'COMPLETED' && capture?.amount?.currency_code === 'MYR' && moneyToSen(capture?.amount?.value) === moneyToSen(order.totalAmount)
 
+    let paidOrder = null
+    let currentOrder = order
     if (isCompleted) {
-      order.status = 'paid'
-      order.paypalCaptureId = capture.id
-      await order.save()
+      paidOrder = await Order.findOneAndUpdate(
+        { _id: order._id, status: 'pending', stockReserved: true, paypalOrderId },
+        { $set: { status: 'paid', paypalCaptureId: capture.id, paymentProvider: 'paypal' } },
+        { new: true },
+      )
+      currentOrder = paidOrder || await Order.findById(order._id)
+      if (!paidOrder) console.error(`PayPal capture ${capture.id} completed for order ${order._id} after its status changed to ${currentOrder?.status || 'missing'}; reconcile payment manually.`)
     }
 
     // Respond to the browser FIRST. The buyer should see "payment successful"
     // immediately, without waiting on email sending (which can be slow or fail).
-    res.json({ status: order.status, paypal: captureData.status })
+    res.json({ status: currentOrder.status, paypal: captureData.status })
 
     // Fire-and-forget notification block - runs AFTER the response is sent.
-    if (isCompleted) {
-      User.findById(order.user)
+    if (paidOrder) {
+      User.findById(paidOrder.user)
         .select('email')
         .lean()
-        .then((buyer) => sendOrderPaidEmails(order, buyer?.email))
+        .then((buyer) => sendOrderPaidEmails(paidOrder, buyer?.email))
         .catch((err) => console.error('Order notification error:', err.message))
     }
   } catch (err) {
@@ -380,33 +299,13 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
 // also gives the UI a safe recovery path after a timeout or network failure.
 router.post('/:id/cancel-payment', protect, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
-  const session = await Order.startSession()
   try {
-    let result
-    await session.withTransaction(async () => {
-      const order = await Order.findOne({ _id: req.params.id, user: req.userId }).session(session)
-      if (!order) throw Object.assign(new Error('Order not found'), { status: 404 })
-      if (order.status === 'paid') { result = order; return }
-      if (order.status === 'cancelled') { result = order; return }
-      for (const item of order.items) {
-        const product = await Product.findById(item.product).session(session)
-        if (!product) continue
-        const sellable = item.variant ? product.variants.id(item.variant) : product
-        if (sellable && sellable.stock !== undefined) {
-          sellable.stock += item.quantity
-          await product.save({ session })
-        }
-      }
-      order.status = 'cancelled'
-      order.stockReserved = false
-      await order.save({ session })
-      result = order
-    })
-    res.json({ status: result.status })
+    const cancelled = await cancelPendingOrder(req.params.id, { userId: req.userId, note: 'Payment was cancelled by the customer.' })
+    const order = cancelled || await Order.findOne({ _id: req.params.id, user: req.userId }).select('status').lean()
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    res.json({ status: order.status })
   } catch (err) {
     res.status(err.status || 500).json({ message: err.status ? err.message : 'Unable to cancel this payment' })
-  } finally {
-    await session.endSession()
   }
 })
 
@@ -445,7 +344,16 @@ router.get('/:id', protect, async (req, res) => {
 // GET all orders (admin only)
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const orders = await Order.find().populate('user', 'name email').sort({ createdAt: -1 })
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50))
+    const fields = '_id user items shippingAddress totalAmount subtotal discount shipping totalWeightKg shippingRegion status statusNote courierName trackingNumber shippedAt deliveredAt fulfilmentNote shipmentEmailStatus shipmentEmailSentAt shipmentEmailLastError createdAt updatedAt __v'
+    const [orders, total] = await Promise.all([
+      Order.find().select(fields).populate('user', 'name email').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      Order.countDocuments(),
+    ])
+    res.set('X-Total-Count', String(total))
+    res.set('X-Page', String(page))
+    res.set('X-Page-Size', String(limit))
     res.json(orders)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -456,9 +364,37 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.put('/:id/status', protect, adminOnly, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
-    const { status, courierName, trackingNumber, fulfilmentNote } = req.body
-    if (!['shipped', 'delivered'].includes(status)) {
+    const { status, courierName, trackingNumber, fulfilmentNote, statusNote } = req.body
+    if (!['shipped', 'delivered', 'cancelled', 'refunded'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })
+    }
+    if (status === 'cancelled' || status === 'refunded') {
+      const note = String(statusNote || '').trim()
+      if (!note || note.length > 1000) return res.status(400).json({ message: 'A note of up to 1000 characters is required' })
+      const session = await mongoose.startSession()
+      let updated
+      try {
+        await session.withTransaction(async () => {
+          const current = await Order.findById(req.params.id).session(session)
+          if (!current) throw Object.assign(new Error('Order not found'), { status: 404 })
+          const allowed = status === 'cancelled'
+            ? ['pending', 'paid'].includes(current.status)
+            : ['paid', 'shipped', 'delivered'].includes(current.status)
+          if (!allowed) throw Object.assign(new Error('Order status transition is not allowed'), { status: 409 })
+          updated = await Order.findOneAndUpdate(
+            { _id: current._id, status: current.status },
+            { $set: { status, statusNote: note } },
+            { new: true, session },
+          )
+          if (!updated) throw Object.assign(new Error('Order status changed; reload and try again'), { status: 409 })
+          if (status === 'cancelled') await releaseOrderStock(updated, session)
+        })
+      } catch (err) {
+        return res.status(err.status || 500).json({ message: err.status ? err.message : 'Unable to update order status' })
+      } finally {
+        await session.endSession()
+      }
+      return res.json(updated)
     }
     const order = await Order.findById(req.params.id)
     if (!order) {

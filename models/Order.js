@@ -40,7 +40,8 @@ const orderSchema = new mongoose.Schema({
     razorpayPaymentId: { type: String, trim: true, unique: true, sparse: true },
     paymentProvider: { type: String, enum: ['paypal', 'razorpay'] },
     stockReserved: { type: Boolean, default: true },
-    status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered'], default: 'pending' },
+    status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered', 'refunded'], default: 'pending' },
+    statusNote: { type: String, trim: true, maxlength: 1000, default: '' },
     courierName: { type: String, trim: true, default: null },
     trackingNumber: { type: String, trim: true, default: null },
     shippedAt: { type: Date, default: null },
@@ -53,6 +54,7 @@ const orderSchema = new mongoose.Schema({
 
 
 orderSchema.index({ user: 1, createdAt: -1 })
+orderSchema.index({ status: 1, createdAt: 1 })
+orderSchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('Order', orderSchema)
-

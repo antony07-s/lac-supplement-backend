@@ -17,7 +17,7 @@ const isStrongPassword = (password) => password.length >= 8
   && /[A-Z]/.test(password)
   && /\d/.test(password)
   && /[^A-Za-z0-9]/.test(password)
-const adminEmails = new Set(['antony.s8637@gmail.com', 'lsmu@hotmail.com'])
+const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean))
 const createToken = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
 const userResponse = (user) => ({ id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin })
 const otpHash = (code) => crypto.createHash('sha256').update(code).digest('hex')
@@ -58,7 +58,8 @@ async function verifyGoogleCredential(credential) {
 }
 
 async function applyAdminRole(user) {
-  if (adminEmails.has(user.email) && !user.isAdmin) {
+  const normalizedEmail = String(user.email || '').trim().toLowerCase()
+  if (adminEmails.has(normalizedEmail) && !user.isAdmin) {
     user.isAdmin = true
     await user.save({ validateBeforeSave: false })
   }

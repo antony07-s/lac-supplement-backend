@@ -4,9 +4,10 @@ const router = express.Router()
 const contactLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many messages sent. Please try again later.' } })
 const crypto = require('crypto')
 const Message = require('../models/Message')
-const { sendNotification, contactThankYouHtml, contactAdminAlertHtml } = require('../config/mailer')
+const { sendNotification, contactThankYouHtml, contactAdminAlertHtml, isContactEmailConfigured } = require('../config/mailer')
 
 router.post('/', contactLimiter, async (req, res) => {
+  if (!isContactEmailConfigured) return res.status(503).json({ message: 'Contact form email is temporarily unavailable. Please try again later.' })
   try {
     const name = String(req.body.name || '').trim()
     const email = String(req.body.email || '').trim().toLowerCase()

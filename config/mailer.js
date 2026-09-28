@@ -1,39 +1,3 @@
-// const nodemailer = require('nodemailer')
-
-// const isConfigured = Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS)
-// const transporter = isConfigured
-//   ? nodemailer.createTransport({
-//       host: 'smtp.gmail.com',
-//       port: 465,
-//       secure: true,
-//       family: 4, // force IPv4 - Render's IPv6 route to Gmail is unreachable
-//       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-//       pool: true,
-//       maxConnections: 2,
-//       connectionTimeout: 8000,
-//       greetingTimeout: 8000,
-//       socketTimeout: 10000,
-//     })
-//   : null
-
-// async function sendNotification({ subject, text, replyTo }) {
-//   if (!transporter) {
-//     const error = new Error('Email service is not configured')
-//     error.code = 'EMAIL_NOT_CONFIGURED'
-//     throw error
-//   }
-//   return transporter.sendMail({
-//     from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-//     to: process.env.CONTACT_RECIPIENT || 'antony.s8637@gmail.com',
-//     subject,
-//     text,
-//     replyTo,
-//   })
-// }
-
-// module.exports = { sendNotification, isConfigured }
-
-
 function verificationEmailHtml(code) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify your email</title></head>
@@ -171,18 +135,22 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
   }
 
   const configuredRecipient = process.env.CONTACT_RECIPIENT?.trim()
-  const recipient = String(to || configuredRecipient || 'antony.s8637@gmail.com')
+  const sender = process.env.EMAIL_FROM?.trim()
+  if (!sender) {
+    const error = new Error('Email sender is not configured')
+    error.code = 'EMAIL_NOT_CONFIGURED'
+    throw error
+  }
+  const recipientValue = to || configuredRecipient
+  if (!recipientValue) {
+    const error = new Error('Contact email recipient is not configured')
+    error.code = 'CONTACT_RECIPIENT_NOT_CONFIGURED'
+    throw error
+  }
+  const recipient = String(recipientValue)
     .split(',')
     .map((email) => email.trim())
     .filter(Boolean)
-
-  if (!to && !configuredRecipient) {
-    console.error(
-      'CRITICAL EMAIL CONFIGURATION WARNING: CONTACT_RECIPIENT is missing. '
-      + 'Admin notification is falling back to antony.s8637@gmail.com. '
-      + 'Set CONTACT_RECIPIENT immediately.',
-    )
-  }
 
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -191,7 +159,7 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM || 'Ayusydah <onboarding@resend.dev>',
+      from: sender,
       to: recipient,
       subject,
       text,
@@ -209,6 +177,7 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
 }
 
 const isConfigured = Boolean(process.env.RESEND_API_KEY)
+const isContactEmailConfigured = Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM?.trim() && process.env.CONTACT_RECIPIENT?.trim())
 
 module.exports = {
   sendNotification,
@@ -216,4 +185,5 @@ module.exports = {
   contactThankYouHtml,
   contactAdminAlertHtml,
   isConfigured,
+  isContactEmailConfigured,
 }

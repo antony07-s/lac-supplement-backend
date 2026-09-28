@@ -24,17 +24,34 @@ function calculateDiscount(subtotalSen) {
   if (subtotalSen < thresholdSen) return 0
   const type = (process.env.DISCOUNT_ABOVE_1000_TYPE || 'amount').toLowerCase()
   const value = configuredNumber('DISCOUNT_ABOVE_1000')
-  if (type === 'percent' || type === 'percentage') return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  if (type === 'percent' || type === 'percentage') {
+    if (value > 100) throw Object.assign(new Error('DISCOUNT_ABOVE_1000 must not exceed 100 percent'), { status: 503 })
+    return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  }
   if (type !== 'amount') throw Object.assign(new Error('DISCOUNT_ABOVE_1000_TYPE must be amount or percent'), { status: 503 })
   return Math.min(subtotalSen, moneyToSen(value))
 }
 
 function calculateIndiaDiscount(subtotalSen) {
-  const thresholdSen = moneyToSen(process.env.INDIA_DISCOUNT_ABOVE_1000_THRESHOLD || 1000)
+  let thresholdSen
+  try {
+    thresholdSen = moneyToSen(configuredNumber('INDIA_DISCOUNT_ABOVE_1000_THRESHOLD'))
+  } catch {
+    throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+  }
+  const type = (process.env.INDIA_DISCOUNT_ABOVE_1000_TYPE || '').toLowerCase()
+  let value
+  try { value = configuredNumber('INDIA_DISCOUNT_ABOVE_1000') } catch {
+    throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+  }
+  if (!['amount', 'percent', 'percentage'].includes(type) || ((type === 'percent' || type === 'percentage') && value > 100)) {
+    throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+  }
   if (subtotalSen < thresholdSen) return 0
-  const type = (process.env.INDIA_DISCOUNT_ABOVE_1000_TYPE || 'amount').toLowerCase()
-  const value = configuredNumber('INDIA_DISCOUNT_ABOVE_1000')
-  if (type === 'percent' || type === 'percentage') return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  if (type === 'percent' || type === 'percentage') {
+    if (value > 100) throw Object.assign(new Error('INDIA_DISCOUNT_ABOVE_1000 must not exceed 100 percent'), { status: 503 })
+    return Math.min(subtotalSen, Math.round(subtotalSen * value / 100))
+  }
   if (type !== 'amount') throw Object.assign(new Error('INDIA_DISCOUNT_ABOVE_1000_TYPE must be amount or percent'), { status: 503 })
   return Math.min(subtotalSen, moneyToSen(value))
 }
@@ -49,7 +66,13 @@ function calculateCheckout({ items, state, country = 'Malaysia' }) {
     if (process.env.INDIA_SHIPPING_ENABLED !== 'true') {
       throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
     }
-    const rate = configuredNumber('INDIA_SHIPPING_RATE_PER_KG')
+    let rate
+    try {
+      rate = configuredNumber('INDIA_SHIPPING_RATE_PER_KG')
+      if (rate <= 0) throw new Error('India shipping rate must be greater than zero')
+    } catch {
+      throw Object.assign(new Error('India shipping rates are not configured yet'), { status: 503 })
+    }
     const discountSen = calculateIndiaDiscount(subtotalSen)
     const shippingSen = moneyToSen(totalWeightKg * rate)
     const totalSen = subtotalSen - discountSen + shippingSen

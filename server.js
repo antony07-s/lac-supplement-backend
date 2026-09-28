@@ -8,6 +8,7 @@ const cors = require('cors')
 const mongoose = require('mongoose')
 const compression = require('compression')
 const rateLimit = require('express-rate-limit')
+const brotliMiddleware = require('./middleware/brotliMiddleware')
 
 const productRoutes = require('./routes/productRoutes')
 const categoryRoutes = require('./routes/categoryRoutes')
@@ -24,8 +25,12 @@ const wishlistRoutes = require('./routes/wishlistRoutes')
 const paypalWebhookRoutes = require('./routes/paypalWebhook')
 const razorpayWebhookRoutes = require('./routes/razorpayWebhook')
 const razorpayRoutes = require('./routes/razorpayRoutes')
+const { expirePendingOrders } = require('./utils/orderInventory')
 
 const app = express()
+
+if (!process.env.CONTACT_RECIPIENT?.trim()) console.warn('CONTACT_RECIPIENT is not configured; contact form submissions will be rejected.')
+if (!process.env.EMAIL_FROM?.trim()) console.warn('EMAIL_FROM is not configured; email delivery is unavailable.')
 
 const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:5173,http://localhost:4173,https://ayusydah.com,https://www.ayusydah.com')
   .split(',')
@@ -46,8 +51,17 @@ app.use(cors({
   },
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+  exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Page-Size'],
 }))
 app.use(compression())
+app.use(brotliMiddleware())
+
+const cachePublicGet = (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600')
+  }
+  next()
+}
 
 app.use('/api/razorpay/webhook', razorpayWebhookRoutes)
 app.use(express.json({ limit: '100kb' }))
@@ -57,6 +71,22 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Content-Security-Policy-Report-Only', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://www.paypal.com https://www.sandbox.paypal.com https://www.googletagmanager.com https://www.google.com https://accounts.google.com",
+    "connect-src 'self' https: wss:",
+    "img-src 'self' data: blob: https://res.cloudinary.com https://*.paypal.com https://*.google.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "frame-src https://checkout.razorpay.com https://www.paypal.com https://www.sandbox.paypal.com https://accounts.google.com",
+    "media-src 'self' blob: https://res.cloudinary.com",
+    "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com",
+  ].join('; '))
   if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   next()
 })
@@ -75,10 +105,10 @@ const authLimiter = rateLimit({
 })
 app.use('/api/auth', authLimiter)
 
-app.use('/api/categories', categoryRoutes)
+app.use('/api/categories', cachePublicGet, categoryRoutes)
 app.use('/api/health-goals', healthGoalRoutes)
-app.use('/api/brands', brandRoutes)
-app.use('/api/testimonials', testimonialRoutes)
+app.use('/api/brands', cachePublicGet, brandRoutes)
+app.use('/api/testimonials', cachePublicGet, testimonialRoutes)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/orders', razorpayRoutes)
@@ -102,11 +132,20 @@ mongoose.connect(process.env.MONGO_URI, {
   minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE) || 2,
   serverSelectionTimeoutMS: 10000,
 })
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {
+    console.log('MongoDB connected')
+    expirePendingOrders().catch((err) => console.error('Pending order expiry failed:', err.message))
+  })
   .catch((err) => console.error('MongoDB connection error:', err))
 
 const PORT = process.env.PORT || 5000
-app.use('/api/products', productRoutes)
+
+const expiryTimer = setInterval(() => {
+  if (mongoose.connection.readyState !== 1) return
+  expirePendingOrders().catch((err) => console.error('Pending order expiry failed:', err.message))
+}, 60 * 1000)
+expiryTimer.unref()
+app.use('/api/products', cachePublicGet, productRoutes)
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ message: 'Invalid JSON body' })
@@ -119,6 +158,9 @@ const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
 
-const shutdown = () => server.close(() => mongoose.connection.close(false).finally(() => process.exit(0)))
+const shutdown = () => {
+  clearInterval(expiryTimer)
+  server.close(() => mongoose.connection.close(false).finally(() => process.exit(0)))
+}
 process.once('SIGTERM', shutdown)
 process.once('SIGINT', shutdown)

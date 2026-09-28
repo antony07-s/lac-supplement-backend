@@ -5,9 +5,9 @@ const variantSchema = new mongoose.Schema({
   price: { type: Number, required: true, min: 0 },
   originalPrice: { type: Number, min: 0 },
   sku: { type: String, trim: true, uppercase: true, maxlength: 100 },
-  stock: { type: Number, required: true, min: 0, default: 0 },
+  stock: { type: Number, required: true, min: 0 },
   image: { type: String, trim: true },
-  shippingWeightKg: { type: Number, min: 0 },
+  shippingWeightKg: { type: Number, required: true, min: 0.001 },
   isAvailable: { type: Boolean, default: true },
 }, { _id: true })
 
@@ -20,10 +20,18 @@ const productSchema = new mongoose.Schema({
   reviews: { type: Number, default: 0, min: 0 },
   // Explicitly curated by an administrator for the homepage collection.
   bestSeller: { type: Boolean, default: false, index: true },
-  stock: { type: Number, min: 0 },
+  stock: {
+    type: Number,
+    min: 0,
+    required() { return !this.variants?.length },
+  },
   // Kilograms. Required for a shipping-enabled checkout; existing catalogue
   // records must be populated by an administrator before sale.
-  shippingWeightKg: { type: Number, min: 0 },
+  shippingWeightKg: {
+    type: Number,
+    min: 0.001,
+    required() { return !this.variants?.length },
+  },
   description: { type: String, trim: true, maxlength: 5000 },
   videoUrl: { type: String, trim: true, maxlength: 2048 },
   videoPublicId: { type: String, trim: true, maxlength: 500 },
@@ -36,5 +44,6 @@ const productSchema = new mongoose.Schema({
 productSchema.index({ category: 1, createdAt: -1 })
 productSchema.index({ healthGoals: 1, createdAt: -1 })
 productSchema.index({ bestSeller: 1, createdAt: -1 })
+productSchema.index({ 'variants.isAvailable': 1, category: 1 })
 
 module.exports = mongoose.model('Product', productSchema)

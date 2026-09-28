@@ -44,7 +44,21 @@ const serializeProduct = (product) => ({
   category: canonicalCategory(product.category),
 })
 
-const productPayload = (body) => ({
+const productPayload = (body) => {
+  const hasVariants = Array.isArray(body.variants) && body.variants.length > 0
+  if (!hasVariants) {
+    const stock = requiredNumber(body.stock, 'Stock')
+    if (!Number.isSafeInteger(stock)) throw Object.assign(new Error('Stock must be a whole number'), { status: 400 })
+    requiredNumber(body.shippingWeightKg, 'Shipping weight')
+    if (Number(body.shippingWeightKg) <= 0) throw Object.assign(new Error('Shipping weight must be greater than zero'), { status: 400 })
+  }
+  for (const variant of (hasVariants ? body.variants : [])) {
+    const stock = requiredNumber(variant.stock, 'Variant stock')
+    if (!Number.isSafeInteger(stock)) throw Object.assign(new Error('Variant stock must be a whole number'), { status: 400 })
+    requiredNumber(variant.shippingWeightKg, 'Variant shipping weight')
+    if (Number(variant.shippingWeightKg) <= 0) throw Object.assign(new Error('Variant shipping weight must be greater than zero'), { status: 400 })
+  }
+  return ({
   name: String(body.name || '').trim(),
   price: requiredNumber(body.price, 'Price'),
   originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? requiredNumber(body.price, 'Price') : requiredNumber(body.originalPrice, 'Original price'),
@@ -72,7 +86,8 @@ const productPayload = (body) => ({
       isAvailable: variant.isAvailable !== false,
     })),
   }),
-})
+  })
+}
 
 // GET all products
 router.get('/', async (req, res, next) => {
@@ -94,8 +109,9 @@ router.get('/', async (req, res, next) => {
       name: { name: 1, _id: 1 },
     }
     const sort = sortOptions[String(req.query.sort || 'newest')] || sortOptions.newest
+    const fields = '_id name price originalPrice image rating reviews bestSeller stock shippingWeightKg description videoUrl videoPublicId category healthGoals variants createdAt updatedAt __v'
     const [products, total] = await Promise.all([
-      Product.find(query).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
+      Product.find(query).select(fields).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
       Product.countDocuments(query),
     ])
     res.json({ products: products.map((product) => ({ ...product, category: canonicalCategory(product.category) })), page, limit, total })
