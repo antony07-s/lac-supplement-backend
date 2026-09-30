@@ -63,6 +63,9 @@ const productPayload = (body) => {
   price: requiredNumber(body.price, 'Price'),
   originalPrice: body.originalPrice === '' || body.originalPrice === undefined ? requiredNumber(body.price, 'Price') : requiredNumber(body.originalPrice, 'Original price'),
   image: String(body.image || '').trim(),
+  ...(Array.isArray(body.images) && {
+    images: [...new Set(body.images.map((image) => String(image || '').trim()).filter(Boolean))].slice(0, 20),
+  }),
   description: String(body.description || '').trim(),
   videoUrl: videoUrl(body.videoUrl),
   videoPublicId: String(body.videoPublicId || '').trim(),
@@ -103,13 +106,14 @@ router.get('/', async (req, res, next) => {
       if (term) query.$or = [{ name: { $regex: term, $options: 'i' } }, { description: { $regex: term, $options: 'i' } }]
     }
     const sortOptions = {
+      catalog: { displayOrder: 1, createdAt: -1 },
       newest: { createdAt: -1 },
       'price-asc': { price: 1, _id: 1 },
       'price-desc': { price: -1, _id: 1 },
       name: { name: 1, _id: 1 },
     }
-    const sort = sortOptions[String(req.query.sort || 'newest')] || sortOptions.newest
-    const fields = '_id name price originalPrice image rating reviews bestSeller stock shippingWeightKg description videoUrl videoPublicId category healthGoals variants createdAt updatedAt __v'
+    const sort = sortOptions[String(req.query.sort || 'catalog')] || sortOptions.catalog
+    const fields = '_id name price originalPrice image images displayOrder rating reviews bestSeller stock shippingWeightKg description videoUrl videoPublicId category healthGoals variants createdAt updatedAt __v'
     const [products, total] = await Promise.all([
       Product.find(query).select(fields).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
       Product.countDocuments(query),
@@ -162,6 +166,79 @@ router.post('/upload-multiple', protect, adminOnly, upload.array('images', 20), 
   }
   const imageUrls = req.files.map((file) => file.path)
   res.json({ imageUrls })
+})
+
+// Import one row per image; rows with the same product title become one product.
+router.post('/bulk-import', protect, adminOnly, async (req, res, next) => {
+  try {
+    const incoming = req.body?.products
+    if (!Array.isArray(incoming) || incoming.length < 1 || incoming.length > 150) {
+      return res.status(400).json({ message: 'Upload between 1 and 150 grouped products.' })
+    }
+
+    const normalizeName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase()
+    const names = incoming.map((product) => normalizeName(product?.name))
+    if (names.some((name) => !name) || new Set(names).size !== names.length) {
+      return res.status(400).json({ message: 'Each product title must be present and unique after grouping.' })
+    }
+
+    const existingNames = await Product.find({}).select('name').lean()
+    const existingByName = new Map(existingNames.map((product) => [normalizeName(product.name), product.name]))
+    const skipped = incoming
+      .filter((product) => existingByName.has(normalizeName(product.name)))
+      .map((product) => existingByName.get(normalizeName(product.name)))
+    const toCreate = incoming.filter((product) => !existingByName.has(normalizeName(product.name)))
+
+    const prepared = []
+    const invalid = []
+    for (const product of toCreate) {
+      try {
+        const imageUrls = [...new Set((Array.isArray(product.images) ? product.images : [])
+          .map((image) => String(image || '').trim())
+          .filter(Boolean))]
+        if (!imageUrls.length || imageUrls.some((image) => {
+          try { return new URL(image).protocol !== 'https:' } catch { return true }
+        })) throw new Error('One or more valid HTTPS image URLs are required.')
+        if (imageUrls.length > 20) throw new Error('A product cannot have more than 20 images.')
+        if (!String(product.description || '').trim()) throw new Error('Description is required.')
+        const payload = productPayload({ ...product, image: product.image || imageUrls[0], images: imageUrls })
+        const document = new Product(payload)
+        await document.validate()
+        prepared.push(payload)
+      } catch (error) {
+        invalid.push({ name: product.name, message: error.message || 'Product data is invalid.' })
+      }
+    }
+
+    if (req.query.preview === 'true') {
+      return res.json({
+        createCount: prepared.length,
+        totalNew: toCreate.length,
+        createNames: prepared.map((product) => product.name),
+        skipped,
+        invalid,
+        message: invalid.length
+          ? `${skipped.length} existing titles will be left unchanged; ${invalid.length} new products need data before import.`
+          : `${prepared.length} new products will be added; ${skipped.length} existing titles will remain unchanged.`,
+      })
+    }
+    if (invalid.length) return res.status(400).json({ message: 'Some new products need corrections before import.', invalid })
+
+    const lastOrderedProduct = await Product.findOne({ displayOrder: { $type: 'number' } })
+      .sort({ displayOrder: -1 }).select('displayOrder').lean()
+    const nextOrder = Number(lastOrderedProduct?.displayOrder ?? 0) + 1
+    const documents = prepared.map((payload, index) => new Product({ ...payload, displayOrder: nextOrder + index }))
+    if (!documents.length) return res.json({ created: [], skipped, message: 'All imported titles already exist; no catalog records changed.' })
+    const saved = await Product.insertMany(documents)
+    res.status(201).json({
+      created: saved.map((product) => ({ id: product._id, name: product.name })),
+      skipped,
+      message: `Imported ${saved.length} products; existing titles were left unchanged.`,
+    })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ message: err.message })
+    next(err)
+  }
 })
 
 router.post('/upload-video', protect, adminOnly, uploadVideo.single('video'), (req, res) => {

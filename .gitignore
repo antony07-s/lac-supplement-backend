@@ -2,3 +2,12 @@ node_modules
 .env
 .env.*
 !.env.example
+
+# Local product import and Cloudinary export data
+/ayusydah-images-export.csv
+/ayusydah-import-preparation-report.md
+/ayusydah-products-import-ready.csv
+/ayusydah-products-import-ready-2.csv
+/ayusydah-products-needing-image-review.csv
+/product-image-upload-pending/
+/scripts/.tmp-*

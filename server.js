@@ -64,7 +64,7 @@ const cachePublicGet = (req, res, next) => {
 }
 
 app.use('/api/razorpay/webhook', razorpayWebhookRoutes)
-app.use(express.json({ limit: '100kb' }))
+app.use(express.json({ limit: '2mb' }))
 app.use('/api/paypal/webhook', paypalWebhookRoutes)
 app.disable('x-powered-by')
 app.use((req, res, next) => {

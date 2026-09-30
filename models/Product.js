@@ -16,6 +16,10 @@ const productSchema = new mongoose.Schema({
   price: { type: Number, required: true, min: 0 },
   originalPrice: { type: Number, required: true, min: 0 },
   image: { type: String, trim: true, default: '' },
+  images: { type: [{ type: String, trim: true }], default: undefined },
+  // Imported batches receive explicit positive positions so they follow the
+  // existing catalog; regular admin-created products omit this and sort first.
+  displayOrder: { type: Number, min: 0 },
   rating: { type: Number, default: 0, min: 0, max: 5 },
   reviews: { type: Number, default: 0, min: 0 },
   // Explicitly curated by an administrator for the homepage collection.
@@ -44,6 +48,7 @@ const productSchema = new mongoose.Schema({
 productSchema.index({ category: 1, createdAt: -1 })
 productSchema.index({ healthGoals: 1, createdAt: -1 })
 productSchema.index({ bestSeller: 1, createdAt: -1 })
+productSchema.index({ displayOrder: 1, createdAt: -1 })
 productSchema.index({ 'variants.isAvailable': 1, category: 1 })
 
 module.exports = mongoose.model('Product', productSchema)
