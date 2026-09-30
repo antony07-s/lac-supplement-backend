@@ -32,10 +32,18 @@ const app = express()
 if (!process.env.CONTACT_RECIPIENT?.trim()) console.warn('CONTACT_RECIPIENT is not configured; contact form submissions will be rejected.')
 if (!process.env.EMAIL_FROM?.trim()) console.warn('EMAIL_FROM is not configured; email delivery is unavailable.')
 
-const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:5173,http://localhost:4173,https://ayusydah.com,https://www.ayusydah.com')
+const configuredOrigins = String(process.env.CLIENT_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim().replace(/\/$/, ''))
   .filter(Boolean)
+const fallbackOrigins = configuredOrigins.length
+  ? configuredOrigins
+  : ['http://localhost:5173', 'http://localhost:4173']
+const allowedOrigins = [...new Set([
+  ...fallbackOrigins,
+  'https://ayusydah.com',
+  'https://www.ayusydah.com',
+])]
 
 if (!process.env.MONGO_URI || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   throw new Error('MONGO_URI and a JWT_SECRET of at least 32 characters must be configured')
