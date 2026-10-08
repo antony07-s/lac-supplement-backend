@@ -166,6 +166,8 @@ router.post('/upload-multiple', protect, adminOnly, upload.array('images', 20), 
   }
   const imageUrls = req.files.map((file) => file.path)
   res.json({ imageUrls })
+}, (err, req, res, next) => {
+  res.status(400).json({ message: err.message || 'Upload failed' })
 })
 
 // Import one row per image; rows with the same product title become one product.

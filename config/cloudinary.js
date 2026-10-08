@@ -13,7 +13,7 @@ const storage = new CloudinaryStorage({
     const nameWithoutExt = file.originalname.replace(/\.[^/.]+$/, '')
     return {
       folder: 'ayusydah-products',
-      allowed_formats: ['jpg', 'jpeg', 'png', 'svg'],
+      allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
       public_id: nameWithoutExt,
     }
   },
