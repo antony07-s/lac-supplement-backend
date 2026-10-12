@@ -39,6 +39,17 @@ const orderSchema = new mongoose.Schema({
     razorpayCreateRequestId: { type: String, trim: true, unique: true, sparse: true },
     razorpayPaymentId: { type: String, trim: true, unique: true, sparse: true },
     paymentProvider: { type: String, enum: ['paypal', 'razorpay'] },
+    // Set before a server-side capture/verification call. Cancellation and the
+    // expiry worker must not release stock while a provider request is active.
+    paymentProcessing: { type: Boolean, default: false, index: true },
+    paymentProcessingSince: { type: Date, default: null },
+    paymentIssue: { type: String, enum: ['late_capture', 'provider_mismatch', 'refund_reconciliation'], default: null },
+    refundStatus: { type: String, enum: ['not-requested', 'processing', 'pending', 'failed', 'completed', 'reconciliation-required'], default: 'not-requested', index: true },
+    refundRequestId: { type: String, trim: true, unique: true, sparse: true },
+    refundId: { type: String, trim: true, unique: true, sparse: true },
+    refundRequestedAt: { type: Date, default: null },
+    refundCompletedAt: { type: Date, default: null },
+    refundLastError: { type: String, trim: true, maxlength: 500, default: '' },
     stockReserved: { type: Boolean, default: true },
     status: { type: String, enum: ['pending', 'paid', 'cancelled', 'shipped', 'delivered', 'refunded'], default: 'pending' },
     statusNote: { type: String, trim: true, maxlength: 1000, default: '' },

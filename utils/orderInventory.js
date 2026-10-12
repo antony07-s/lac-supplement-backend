@@ -1,6 +1,7 @@
 const mongoose = require('mongoose')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
+const { getProviderPaymentState } = require('./providerPayments')
 
 const DEFAULT_EXPIRY_MINUTES = 30
 
@@ -29,7 +30,7 @@ async function cancelPendingOrder(orderId, { before, note, userId } = {}) {
   let result = null
   try {
     await session.withTransaction(async () => {
-      const filter = { _id: orderId, status: 'pending', stockReserved: true }
+      const filter = { _id: orderId, status: 'pending', stockReserved: true, paymentProcessing: { $ne: true } }
       if (before) filter.createdAt = { $lte: before }
       if (userId) filter.user = userId
       const order = await Order.findOneAndUpdate(filter, {
@@ -50,11 +51,39 @@ async function expirePendingOrders() {
   const configured = Number(process.env.PENDING_ORDER_EXPIRY_MINUTES)
   const minutes = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_EXPIRY_MINUTES
   const before = new Date(Date.now() - minutes * 60 * 1000)
-  const candidates = await Order.find({ status: 'pending', stockReserved: true, createdAt: { $lte: before } })
-    .select('_id').sort({ createdAt: 1 }).limit(100).lean()
+  const staleLockBefore = new Date(Date.now() - 10 * 60 * 1000)
+  const candidates = await Order.find({
+    status: 'pending', stockReserved: true, createdAt: { $lte: before },
+    $or: [{ paymentProcessing: { $ne: true } }, { paymentProcessingSince: { $lte: staleLockBefore } }],
+  }).select('_id paymentProvider paypalOrderId razorpayOrderId totalAmount paymentProcessing paymentProcessingSince')
+    .sort({ createdAt: 1 }).limit(100).lean()
   let expired = 0
   for (const candidate of candidates) {
-    if (await cancelPendingOrder(candidate._id, { before, note: `Payment reservation expired after ${minutes} minutes.` })) expired += 1
+    try {
+      const state = await getProviderPaymentState(candidate)
+      if (state.state === 'captured') {
+        if (state.provider === 'razorpay') {
+          const captured = state.payments.find((payment) => payment.status === 'captured')
+          if (captured) {
+            const { getRazorpay, settleRazorpayPayment } = require('./razorpay')
+            await settleRazorpayPayment(await getRazorpay().payments.fetch(captured.id))
+          }
+        } else {
+          const captureId = state.remoteOrder.purchase_units?.flatMap((unit) => unit.payments?.captures || []).find((capture) => capture.status === 'COMPLETED')?.id
+          if (captureId) await require('./paypal').settlePayPalCapture(candidate, captureId)
+        }
+        continue
+      }
+      if (!['unpaid', 'failed'].includes(state.state)) continue
+      if (candidate.paymentProcessing && candidate.paymentProcessingSince <= staleLockBefore) {
+        await Order.updateOne({ _id: candidate._id, status: 'pending', paymentProcessing: true, paymentProcessingSince: { $lte: staleLockBefore } }, {
+          $set: { paymentProcessing: false, paymentProcessingSince: null },
+        })
+      }
+      if (await cancelPendingOrder(candidate._id, { before, note: `Payment reservation expired after ${minutes} minutes.` })) expired += 1
+    } catch (error) {
+      console.error(`Could not verify expired order ${candidate._id} with its payment provider:`, error.message)
+    }
   }
   return expired
 }

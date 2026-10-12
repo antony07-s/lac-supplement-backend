@@ -6,10 +6,12 @@ const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
-const { PAYPAL_BASE, getPayPalAccessToken } = require('../utils/paypal')
+const { PAYPAL_BASE, getPayPalAccessToken, settlePayPalCapture } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
-const { sendOrderPaidEmails, sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
+const { sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
 const { releaseOrderStock, cancelPendingOrder } = require('../utils/orderInventory')
+const { getProviderPaymentState, canCancelOrder } = require('../utils/providerPayments')
+const { processFullRefund, reconcileRefund } = require('../utils/refunds')
 
 async function recordShipmentEmail(order) {
   const buyer = await User.findById(order.user).select('email').lean()
@@ -204,7 +206,12 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
 
     const ppData = await ppRes.json()
     if (!ppData.id) return res.status(502).json({ message: 'PayPal returned an invalid order response' })
-    await Order.findOneAndUpdate({ _id: order._id, status: 'pending' }, { paypalOrderId: ppData.id, paymentProvider: 'paypal' })
+    const attached = await Order.findOneAndUpdate(
+      { _id: order._id, status: 'pending', paypalCreateRequestId: requestId, paymentProvider: 'paypal' },
+      { $set: { paypalOrderId: ppData.id, paymentProvider: 'paypal' }, $unset: { paypalCreateRequestId: 1 } },
+      { new: true },
+    )
+    if (!attached) return res.status(409).json({ message: 'This order was cancelled while payment setup was finishing. No payment was started.' })
     res.json({ orderId: ppData.id })
   } catch (err) {
     console.error('PayPal order error:', err.message)
@@ -216,6 +223,7 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
 // PayPal splits payment into two steps: create order, then capture after
 // buyer approval. This route verifies the completed capture with PayPal.
 router.post('/:id/paypal-capture', protect, async (req, res) => {
+  let lockClaimed = false
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid order ID' })
@@ -234,6 +242,14 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
       return res.status(409).json({ message: `This order is already ${order.status} and cannot be paid again.` })
     }
     if (order.paypalOrderId !== paypalOrderId) return res.status(409).json({ message: 'This PayPal order does not belong to this checkout' })
+
+    const claimed = await Order.findOneAndUpdate(
+      { _id: order._id, status: 'pending', stockReserved: true, paymentProcessing: { $ne: true }, paypalOrderId },
+      { $set: { paymentProcessing: true, paymentProcessingSince: new Date() } },
+      { new: true },
+    )
+    if (!claimed) return res.status(409).json({ message: 'Payment is already being confirmed or this order can no longer be paid.' })
+    lockClaimed = true
 
     const accessToken = await getPayPalAccessToken()
 
@@ -263,35 +279,21 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
 
     const captureData = await captureRes.json()
     const capture = captureData.purchase_units?.[0]?.payments?.captures?.[0]
-    const isCompleted = captureData.status === 'COMPLETED' && capture?.status === 'COMPLETED' && capture?.amount?.currency_code === 'MYR' && moneyToSen(capture?.amount?.value) === moneyToSen(order.totalAmount)
-
-    let paidOrder = null
-    let currentOrder = order
-    if (isCompleted) {
-      paidOrder = await Order.findOneAndUpdate(
-        { _id: order._id, status: 'pending', stockReserved: true, paypalOrderId },
-        { $set: { status: 'paid', paypalCaptureId: capture.id, paymentProvider: 'paypal' } },
-        { new: true },
-      )
-      currentOrder = paidOrder || await Order.findById(order._id)
-      if (!paidOrder) console.error(`PayPal capture ${capture.id} completed for order ${order._id} after its status changed to ${currentOrder?.status || 'missing'}; reconcile payment manually.`)
-    }
+    const verified = captureData.status === 'COMPLETED' && capture?.status === 'COMPLETED'
+      ? await settlePayPalCapture(order, capture.id)
+      : { ok: false, reason: 'not-captured' }
+    if (!verified.ok) return res.status(409).json({ message: verified.reason === 'late-capture' ? 'Payment completed after this order changed. Support has been alerted to reconcile it.' : 'PayPal has not confirmed a completed payment for this order.' })
+    const currentOrder = verified.order
+    lockClaimed = false
 
     // Respond to the browser FIRST. The buyer should see "payment successful"
     // immediately, without waiting on email sending (which can be slow or fail).
     res.json({ status: currentOrder.status, paypal: captureData.status })
-
-    // Fire-and-forget notification block - runs AFTER the response is sent.
-    if (paidOrder) {
-      User.findById(paidOrder.user)
-        .select('email')
-        .lean()
-        .then((buyer) => sendOrderPaidEmails(paidOrder, buyer?.email))
-        .catch((err) => console.error('Order notification error:', err.message))
-    }
   } catch (err) {
     console.error('PayPal capture error:', err.message)
     res.status(500).json({ message: 'Unable to complete payment. Please try again.' })
+  } finally {
+    if (lockClaimed) await Order.updateOne({ _id: req.params.id, status: 'pending' }, { $set: { paymentProcessing: false, paymentProcessingSince: null } })
   }
 })
 
@@ -300,9 +302,30 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
 router.post('/:id/cancel-payment', protect, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
   try {
+    const current = await Order.findOne({ _id: req.params.id, user: req.userId })
+    if (!current) return res.status(404).json({ message: 'Order not found' })
+    if (current.status !== 'pending') return res.status(409).json({ message: `This order is already ${current.status}.` })
+    if (current.paymentProcessing) return res.status(409).json({ message: 'Payment is being confirmed. Please wait for the final order status.' })
+    const providerState = await getProviderPaymentState(current)
+    if (providerState.state === 'captured') {
+      if (providerState.provider === 'razorpay') {
+        const captured = providerState.payments.find((payment) => payment.status === 'captured')
+        if (!captured) return res.status(409).json({ message: 'The provider reports a paid order but its payment could not be identified. Support has been alerted.' })
+        const payment = await require('../utils/razorpay').getRazorpay().payments.fetch(captured.id)
+        await require('../utils/razorpay').settleRazorpayPayment(payment)
+      } else {
+        const captureId = providerState.remoteOrder.purchase_units?.flatMap((unit) => unit.payments?.captures || []).find((capture) => capture.status === 'COMPLETED')?.id
+        if (captureId) await settlePayPalCapture(current, captureId)
+      }
+      return res.status(409).json({ message: 'The provider confirms payment for this order. Reload your order status.' })
+    }
+    if (!canCancelOrder({ status: current.status, paymentProcessing: current.paymentProcessing, providerState: providerState.state }) && providerState.state !== 'captured') {
+      return res.status(409).json({ message: 'The payment provider has not confirmed that this payment is safe to cancel. Please wait and check again.' })
+    }
     const cancelled = await cancelPendingOrder(req.params.id, { userId: req.userId, note: 'Payment was cancelled by the customer.' })
     const order = cancelled || await Order.findOne({ _id: req.params.id, user: req.userId }).select('status').lean()
     if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (order.status === 'pending') return res.status(409).json({ message: 'Payment is being confirmed. Please reload the order shortly.' })
     res.json({ status: order.status })
   } catch (err) {
     res.status(err.status || 500).json({ message: err.status ? err.message : 'Unable to cancel this payment' })
@@ -346,7 +369,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50))
-    const fields = '_id user items shippingAddress totalAmount subtotal discount shipping totalWeightKg shippingRegion status statusNote courierName trackingNumber shippedAt deliveredAt fulfilmentNote shipmentEmailStatus shipmentEmailSentAt shipmentEmailLastError createdAt updatedAt __v'
+    const fields = '_id user items shippingAddress totalAmount subtotal discount shipping totalWeightKg shippingRegion status statusNote paymentIssue refundStatus refundRequestedAt courierName trackingNumber shippedAt deliveredAt fulfilmentNote shipmentEmailStatus shipmentEmailSentAt shipmentEmailLastError createdAt updatedAt __v'
     const [orders, total] = await Promise.all([
       Order.find().select(fields).populate('user', 'name email').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
       Order.countDocuments(),
@@ -368,18 +391,30 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     if (!['shipped', 'delivered', 'cancelled', 'refunded'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' })
     }
+    if (status === 'refunded') {
+      const note = String(statusNote || '').trim()
+      if (!note || note.length > 1000) return res.status(400).json({ message: 'A note of up to 1000 characters is required' })
+      const refunded = await processFullRefund(req.params.id, note)
+      return res.json(refunded)
+    }
     if (status === 'cancelled' || status === 'refunded') {
       const note = String(statusNote || '').trim()
       if (!note || note.length > 1000) return res.status(400).json({ message: 'A note of up to 1000 characters is required' })
       const session = await mongoose.startSession()
       let updated
       try {
+        const beforeCancel = await Order.findById(req.params.id)
+        if (!beforeCancel) return res.status(404).json({ message: 'Order not found' })
+        if (status === 'cancelled') {
+          if (beforeCancel.paymentProcessing) return res.status(409).json({ message: 'Payment is being confirmed; the order cannot be cancelled yet' })
+          const providerState = await getProviderPaymentState(beforeCancel)
+          if (!canCancelOrder({ status: beforeCancel.status, paymentProcessing: beforeCancel.paymentProcessing, providerState: providerState.state })) return res.status(409).json({ message: 'The provider has not confirmed that this order is safe to cancel' })
+        }
         await session.withTransaction(async () => {
           const current = await Order.findById(req.params.id).session(session)
           if (!current) throw Object.assign(new Error('Order not found'), { status: 404 })
-          const allowed = status === 'cancelled'
-            ? ['pending', 'paid'].includes(current.status)
-            : ['paid', 'shipped', 'delivered'].includes(current.status)
+          const allowed = status === 'cancelled' && current.status === 'pending'
+          if (current.paymentProcessing) throw Object.assign(new Error('Payment is being confirmed; the order cannot be cancelled yet'), { status: 409 })
           if (!allowed) throw Object.assign(new Error('Order status transition is not allowed'), { status: 409 })
           updated = await Order.findOneAndUpdate(
             { _id: current._id, status: current.status },
@@ -439,6 +474,16 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ message: err.message })
+  }
+})
+
+router.post('/:id/refund/reconcile', protect, adminOnly, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
+  try {
+    const order = await reconcileRefund(req.params.id)
+    res.json({ status: order.status, refundStatus: order.refundStatus, paymentIssue: order.paymentIssue })
+  } catch (err) {
+    res.status(err.status || 502).json({ message: err.status ? err.message : 'Unable to reconcile the refund with the provider' })
   }
 })
 

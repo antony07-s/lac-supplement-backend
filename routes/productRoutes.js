@@ -32,6 +32,11 @@ const videoUrl = (value) => {
   }
 }
 
+const videoUrls = (value) => {
+  const urls = Array.isArray(value) ? value : (value ? [value] : [])
+  return [...new Set(urls.map((url) => videoUrl(url)).filter(Boolean))]
+}
+
 const requiredNumber = (value, field) => {
   if (value === '' || value === undefined || value === null) throw Object.assign(new Error(`${field} is required`), { status: 400 })
   const number = Number(value)
@@ -67,6 +72,7 @@ const productPayload = (body) => {
     images: [...new Set(body.images.map((image) => String(image || '').trim()).filter(Boolean))].slice(0, 20),
   }),
   description: String(body.description || '').trim(),
+  ...(Object.hasOwn(body, 'videos') && { videos: videoUrls(body.videos) }),
   videoUrl: videoUrl(body.videoUrl),
   videoPublicId: String(body.videoPublicId || '').trim(),
   bestSeller: body.bestSeller === true,
@@ -113,7 +119,7 @@ router.get('/', async (req, res, next) => {
       name: { name: 1, _id: 1 },
     }
     const sort = sortOptions[String(req.query.sort || 'catalog')] || sortOptions.catalog
-    const fields = '_id name price originalPrice image images displayOrder rating reviews bestSeller stock shippingWeightKg description videoUrl videoPublicId category healthGoals variants createdAt updatedAt __v'
+    const fields = '_id name price originalPrice image images displayOrder rating reviews bestSeller stock shippingWeightKg description videos videoUrl videoPublicId category healthGoals variants createdAt updatedAt __v'
     const [products, total] = await Promise.all([
       Product.find(query).select(fields).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
       Product.countDocuments(query),

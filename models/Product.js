@@ -37,6 +37,7 @@ const productSchema = new mongoose.Schema({
     required() { return !this.variants?.length },
   },
   description: { type: String, trim: true, maxlength: 5000 },
+  videos: { type: [{ type: String, trim: true, maxlength: 2048 }], default: [] },
   videoUrl: { type: String, trim: true, maxlength: 2048 },
   videoPublicId: { type: String, trim: true, maxlength: 500 },
   category: { type: String, required: true, trim: true, index: true },

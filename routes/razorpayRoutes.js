@@ -94,6 +94,7 @@ router.post('/:id/razorpay-order', protect, paymentLimiter, async (req, res) => 
 
 // VERIFY a payment after the Razorpay popup reports success in the browser.
 router.post('/:id/razorpay-verify', protect, paymentLimiter, async (req, res) => {
+  let lockClaimed = false
   try {
     if (!isRazorpayEnabled()) return res.status(503).json({ message: 'Razorpay payment is not available right now.' })
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid order ID' })
@@ -118,6 +119,14 @@ router.post('/:id/razorpay-verify', protect, paymentLimiter, async (req, res) =>
       return res.status(400).json({ message: 'Payment verification failed' })
     }
 
+    const claimed = await Order.findOneAndUpdate(
+      { _id: order._id, status: 'pending', stockReserved: true, paymentProcessing: { $ne: true }, razorpayOrderId: rzpOrderId },
+      { $set: { paymentProcessing: true, paymentProcessingSince: new Date() } },
+      { new: true },
+    )
+    if (!claimed) return res.status(409).json({ message: 'Payment is already being confirmed or this order can no longer be paid.' })
+    lockClaimed = true
+
     // Never rely on the browser: read the payment from Razorpay itself.
     const razorpay = getRazorpay()
     let payment = await razorpay.payments.fetch(rzpPaymentId)
@@ -131,10 +140,13 @@ router.post('/:id/razorpay-verify', protect, paymentLimiter, async (req, res) =>
     if (!result.ok) {
       return res.status(409).json({ message: 'We could not confirm this payment yet. If money was deducted, the order will be confirmed automatically shortly.' })
     }
+    lockClaimed = false
     res.json({ status: result.order.status })
   } catch (err) {
     console.error('Razorpay verify error:', err?.error?.description || err.message)
     res.status(500).json({ message: 'Unable to confirm payment. If money was deducted, the order will be confirmed automatically shortly.' })
+  } finally {
+    if (lockClaimed) await Order.updateOne({ _id: req.params.id, status: 'pending' }, { $set: { paymentProcessing: false, paymentProcessingSince: null } })
   }
 })
 

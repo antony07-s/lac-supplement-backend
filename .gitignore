@@ -11,3 +11,12 @@ node_modules
 /ayusydah-products-needing-image-review.csv
 /product-image-upload-pending/
 /scripts/.tmp-*
+
+# Generated Cloudinary video review and linking artifacts
+/video-linking-report.md
+/video-review/
+/videos-doubtful.csv
+/videos-inventory.csv
+/videos-mapping.csv
+/videos-product-catalog.csv
+/videos-products-not-found.csv

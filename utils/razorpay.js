@@ -4,6 +4,7 @@ const Order = require('../models/Order')
 const User = require('../models/User')
 const { moneyToSen } = require('./checkout')
 const { sendOrderPaidEmails } = require('./notify')
+const { evaluateCapture } = require('./paymentState')
 
 // The store prices everything in Malaysian ringgit, so Razorpay charges MYR too.
 // (Needs "International Payments" approved on the Razorpay account.)
@@ -47,25 +48,32 @@ function verifyWebhookSignature(rawBody, signature) {
 // Shared by the browser-verify route and the webhook, so an order is marked
 // paid exactly once and the paid emails are sent exactly once.
 async function settleRazorpayPayment(payment) {
-  if (!payment || payment.status !== 'captured') return { ok: false, reason: 'not-captured' }
+  if (!payment) return { ok: false, reason: 'not-captured' }
   const order = await Order.findOne({ razorpayOrderId: payment.order_id })
   if (!order) return { ok: false, reason: 'order-not-found' }
 
-  if (payment.currency !== CURRENCY || Number(payment.amount) !== moneyToSen(order.totalAmount)) {
+  const decision = evaluateCapture({ order, payment: { ...payment, amount: Number(payment.amount) }, providerOrderId: order.razorpayOrderId, paymentOrderId: payment.order_id, currency: CURRENCY, expectedAmount: moneyToSen(order.totalAmount) })
+  if (decision === 'not-captured') return { ok: false, reason: 'not-captured', order }
+  if (decision === 'mismatch') {
+    await Order.updateOne({ _id: order._id }, { $set: { paymentIssue: 'provider_mismatch', refundStatus: 'reconciliation-required' } })
     console.error(`Razorpay payment ${payment.id} does not match order ${order._id}`)
     return { ok: false, reason: 'mismatch', order }
   }
+  if (decision === 'duplicate') return { ok: true, reason: 'duplicate', order, transitioned: false }
 
   const updated = await Order.findOneAndUpdate(
-    { _id: order._id, status: 'pending' },
-    { $set: { status: 'paid', razorpayPaymentId: payment.id, paymentProvider: 'razorpay' } },
+    { _id: order._id, status: 'pending', stockReserved: true },
+    { $set: { status: 'paid', razorpayPaymentId: payment.id, paymentProvider: 'razorpay', paymentProcessing: false, paymentProcessingSince: null } },
     { new: true },
   )
 
   if (!updated) {
     const alreadyThisPayment = order.status === 'paid' && order.razorpayPaymentId === payment.id
     if (!alreadyThisPayment) {
-      console.warn(`Razorpay payment ${payment.id} arrived for order ${order._id} in status "${order.status}" - check it and refund manually if needed`)
+      await Order.updateOne({ _id: order._id, razorpayPaymentId: { $in: [null, payment.id] } }, {
+        $set: { razorpayPaymentId: payment.id, paymentIssue: 'late_capture', refundStatus: 'reconciliation-required', paymentProcessing: false, paymentProcessingSince: null },
+      })
+      console.error(`Razorpay captured payment ${payment.id} requires reconciliation for order ${order._id} (status: ${order.status})`)
     }
     return { ok: alreadyThisPayment, reason: 'not-pending', order, transitioned: false }
   }
