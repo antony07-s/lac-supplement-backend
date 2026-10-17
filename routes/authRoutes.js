@@ -31,6 +31,7 @@ const cookieOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  partitioned: process.env.NODE_ENV === 'production',
   path: '/api',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 })
@@ -39,6 +40,7 @@ const clearSessionCookie = (res) => res.clearCookie('ayusydah_session', {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  partitioned: process.env.NODE_ENV === 'production',
   path: '/api',
 })
 const otpHash = (code) => crypto.createHash('sha256').update(code).digest('hex')
