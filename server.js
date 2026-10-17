@@ -43,6 +43,7 @@ const allowedOrigins = [...new Set([
   ...fallbackOrigins,
   'https://ayusydah.com',
   'https://www.ayusydah.com',
+  'https://lac-supplement-store.vercel.app',
 ])]
 
 if (!process.env.MONGO_URI || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
@@ -149,6 +150,9 @@ expiryTimer.unref()
 app.use('/api/products', cachePublicGet, productRoutes)
 
 app.use((err, req, res, next) => {
+  if (err.message === 'Origin not allowed by CORS') {
+    return res.status(403).json({ message: 'Origin not allowed by CORS' })
+  }
   if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ message: 'Invalid JSON body' })
   if (err.name === 'MulterError') return res.status(400).json({ message: 'Invalid upload' })
   console.error(err)

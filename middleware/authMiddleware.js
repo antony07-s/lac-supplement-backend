@@ -8,6 +8,7 @@ const trustedOrigins = new Set([
   ...(process.env.CLIENT_ORIGINS || '').split(',').map((origin) => origin.trim().replace(/\/$/, '')).filter(Boolean),
   'https://ayusydah.com',
   'https://www.ayusydah.com',
+  'https://lac-supplement-store.vercel.app',
   'http://localhost:5173',
   'http://localhost:4173',
 ])
