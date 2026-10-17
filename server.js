@@ -53,13 +53,15 @@ if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
 
 app.use(cors({
   origin(origin, callback) {
+    if (!origin) return callback(null, false)
     const normalizedOrigin = String(origin || '').replace(/\/$/, '')
-    if (!origin || allowedOrigins.includes(normalizedOrigin)) return callback(null, true)
+    if (allowedOrigins.includes(normalizedOrigin)) return callback(null, true)
     return callback(new Error('Origin not allowed by CORS'))
   },
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
   exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Page-Size'],
+  credentials: true,
 }))
 app.use(compression())
 app.use(brotliMiddleware())
@@ -135,24 +137,15 @@ app.get('/health', (req, res) => {
   res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' })
 })
 
-mongoose.connect(process.env.MONGO_URI, {
-  maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE) || 20,
-  minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE) || 2,
-  serverSelectionTimeoutMS: 10000,
-})
-  .then(() => {
-    console.log('MongoDB connected')
-    expirePendingOrders().catch((err) => console.error('Pending order expiry failed:', err.message))
-  })
-  .catch((err) => console.error('MongoDB connection error:', err))
-
 const PORT = process.env.PORT || 5000
+let server
 
 const expiryTimer = setInterval(() => {
   if (mongoose.connection.readyState !== 1) return
   expirePendingOrders().catch((err) => console.error('Pending order expiry failed:', err.message))
 }, 60 * 1000)
 expiryTimer.unref()
+
 app.use('/api/products', cachePublicGet, productRoutes)
 
 app.use((err, req, res, next) => {
@@ -162,13 +155,29 @@ app.use((err, req, res, next) => {
   return res.status(500).json({ message: 'Internal server error' })
 })
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
+mongoose.connect(process.env.MONGO_URI, {
+  maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE) || 20,
+  minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE) || 2,
+  serverSelectionTimeoutMS: 10000,
 })
+  .then(() => {
+    console.log('MongoDB connected')
+    expirePendingOrders().catch((err) => console.error('Pending order expiry failed:', err.message))
+    server = app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`)
+    })
+  })
+  .catch((err) => {
+    clearInterval(expiryTimer)
+    console.error('MongoDB connection failed; API will not start:', err.message)
+    process.exit(1)
+  })
 
 const shutdown = () => {
   clearInterval(expiryTimer)
-  server.close(() => mongoose.connection.close(false).finally(() => process.exit(0)))
+  const closeDatabase = () => mongoose.connection.close(false).finally(() => process.exit(0))
+  if (server) server.close(closeDatabase)
+  else closeDatabase()
 }
 process.once('SIGTERM', shutdown)
 process.once('SIGINT', shutdown)

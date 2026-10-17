@@ -12,7 +12,8 @@ function classifyRazorpayPayments(remoteOrder, payments) {
 }
 
 function classifyPayPalOrderStatus(status) {
-  if (['CREATED', 'APPROVED', 'VOIDED'].includes(status)) return 'unpaid'
+  if (['CREATED', 'VOIDED'].includes(status)) return 'unpaid'
+  if (status === 'APPROVED') return 'in-progress'
   if (status === 'COMPLETED') return 'captured'
   if (status === 'PAYER_ACTION_REQUIRED') return 'in-progress'
   return 'unknown'

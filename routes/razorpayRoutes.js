@@ -51,7 +51,7 @@ router.post('/:id/razorpay-order', protect, paymentLimiter, async (req, res) => 
         paymentProvider: { $in: [null, 'razorpay'] },
       },
       { $set: { razorpayCreateRequestId: createRequestId, paymentProvider: 'razorpay' } },
-      { new: true },
+      { returnDocument: 'after' },
     )
     if (!claimed) {
       const current = await Order.findById(order._id)
@@ -79,7 +79,7 @@ router.post('/:id/razorpay-order', protect, paymentLimiter, async (req, res) => 
     const saved = await Order.findOneAndUpdate(
       { _id: order._id, status: 'pending', razorpayCreateRequestId: createRequestId, razorpayOrderId: { $exists: false } },
       { $set: { razorpayOrderId: rzpOrder.id }, $unset: { razorpayCreateRequestId: 1 } },
-      { new: true },
+      { returnDocument: 'after' },
     )
     const current = saved || await Order.findById(order._id)
     if (!current || current.status !== 'pending' || !current.razorpayOrderId) {
@@ -122,7 +122,7 @@ router.post('/:id/razorpay-verify', protect, paymentLimiter, async (req, res) =>
     const claimed = await Order.findOneAndUpdate(
       { _id: order._id, status: 'pending', stockReserved: true, paymentProcessing: { $ne: true }, razorpayOrderId: rzpOrderId },
       { $set: { paymentProcessing: true, paymentProcessingSince: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     )
     if (!claimed) return res.status(409).json({ message: 'Payment is already being confirmed or this order can no longer be paid.' })
     lockClaimed = true

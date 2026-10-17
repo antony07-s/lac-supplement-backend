@@ -1,5 +1,6 @@
 const cloudinary = require('cloudinary').v2
 const { CloudinaryStorage } = require('multer-storage-cloudinary-v2')
+const { randomUUID } = require('crypto')
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -10,11 +11,10 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary,
   params: (req, file) => {
-    const nameWithoutExt = file.originalname.replace(/\.[^/.]+$/, '')
     return {
       folder: 'ayusydah-products',
       allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-      public_id: nameWithoutExt,
+      public_id: randomUUID(),
     }
   },
 })
@@ -25,7 +25,7 @@ const videoStorage = new CloudinaryStorage({
     folder: 'ayusydah-products/videos',
     resource_type: 'video',
     allowed_formats: ['mp4', 'webm', 'mov'],
-    public_id: file.originalname.replace(/\.[^/.]+$/, ''),
+    public_id: randomUUID(),
   }),
 })
 

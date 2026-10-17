@@ -1,5 +1,7 @@
 const { randomUUID } = require('crypto')
+const mongoose = require('mongoose')
 const Order = require('../models/Order')
+const { restoreOrderItems } = require('./orderInventory')
 const { getRazorpay, CURRENCY } = require('./razorpay')
 const { PAYPAL_BASE, getPayPalAccessToken } = require('./paypal')
 const { moneyToSen } = require('./checkout')
@@ -24,7 +26,7 @@ async function processFullRefund(orderId, note) {
     paymentProcessing: { $ne: true },
   }, {
     $set: { refundStatus: 'processing', refundRequestId: requestId, refundRequestedAt: new Date(), refundLastError: '', statusNote: note },
-  }, { new: true })
+  }, { returnDocument: 'after' })
 
   if (!order) {
     const current = await Order.findById(orderId)
@@ -111,8 +113,57 @@ async function finishRefund(order, refundId, state) {
     ...(refundId && { refundId }),
     ...(state === 'completed' && { status: 'refunded', refundCompletedAt: new Date(), paymentIssue: null }),
   }
-  const saved = await Order.findOneAndUpdate({ _id: order._id, refundRequestId: order.refundRequestId }, { $set: update }, { new: true })
-  if (!saved) throw httpError(409, 'Refund state changed; reload the order before continuing.')
+  if (state !== 'completed') {
+    const saved = await Order.findOneAndUpdate({ _id: order._id, refundRequestId: order.refundRequestId }, { $set: update }, { returnDocument: 'after' })
+    if (!saved) throw httpError(409, 'Refund state changed; reload the order before continuing.')
+    return saved
+  }
+
+  const session = await mongoose.startSession()
+  let saved
+  try {
+    await session.withTransaction(async () => {
+      const requestFilter = order.refundRequestId
+        ? { refundRequestId: order.refundRequestId }
+        : { $or: [{ refundRequestId: null }, { refundRequestId: { $exists: false } }] }
+      const claimUpdate = {
+        ...update,
+        stockReserved: false,
+      }
+      const claimed = await Order.findOneAndUpdate({
+        _id: order._id,
+        status: 'paid',
+        stockReserved: true,
+        ...requestFilter,
+      }, { $set: claimUpdate }, { returnDocument: 'after', session })
+      if (claimed) {
+        await restoreOrderItems(claimed, session)
+        saved = claimed
+        return
+      }
+
+      const current = await Order.findById(order._id).session(session)
+      if (!current) throw httpError(404, 'Order not found')
+      const sameRefundRequest = order.refundRequestId
+        ? String(current.refundRequestId || '') === String(order.refundRequestId)
+        : !current.refundRequestId
+      if (!sameRefundRequest) throw httpError(409, 'Refund request changed; reload the order before continuing.')
+      if (current.status === 'refunded' && current.refundStatus === 'completed') {
+        saved = current
+        return
+      }
+      current.status = 'refunded'
+      current.refundStatus = 'completed'
+      current.refundLastError = ''
+      current.refundCompletedAt = current.refundCompletedAt || new Date()
+      current.paymentIssue = null
+      if (refundId) current.refundId = refundId
+      await current.save({ session })
+      saved = current
+    })
+  } finally {
+    await session.endSession()
+  }
   return saved
 }
 
@@ -129,8 +180,7 @@ async function reconcileRefund(orderId) {
     if (payment.order_id === order.razorpayOrderId && payment.currency === CURRENCY
       && Number(payment.amount) === moneyToSen(order.totalAmount)
       && Number(payment.amount_refunded || 0) === moneyToSen(order.totalAmount) && payment.refund_status === 'full') {
-      const saved = await Order.findOneAndUpdate({ _id: order._id }, { $set: { status: 'refunded', refundStatus: 'completed', refundCompletedAt: new Date(), refundLastError: '', paymentIssue: null } }, { new: true })
-      return saved
+      return finishRefund(order, order.refundId, 'completed')
     }
     if (order.refundId) {
       const refund = await gateway.payments.fetchRefund(order.razorpayPaymentId, order.refundId)
@@ -153,7 +203,7 @@ async function reconcileRefund(orderId) {
     if (capture.id === order.paypalCaptureId && capture.amount?.currency_code === CURRENCY
       && moneyToSen(capture.amount.value) === moneyToSen(order.totalAmount)
       && capture.status === 'REFUNDED' && refunded?.currency_code === CURRENCY && moneyToSen(refunded.value) === moneyToSen(order.totalAmount)) {
-      return Order.findOneAndUpdate({ _id: order._id }, { $set: { status: 'refunded', refundStatus: 'completed', refundCompletedAt: new Date(), refundLastError: '', paymentIssue: null } }, { new: true })
+      return finishRefund(order, order.refundId, 'completed')
     }
     if (moneyToSen(refunded?.value || 0) > 0) throw httpError(409, 'The provider reports a partial refund. Manual reconciliation is required; no additional refund was submitted.')
     if (order.refundId) {
@@ -184,9 +234,9 @@ async function applyProviderRefund(order, refund, provider) {
   const state = (refund.status === 'processed' || refund.status === 'COMPLETED') ? 'completed'
     : (refund.status === 'failed' || refund.status === 'FAILED') ? 'failed' : 'pending'
   const update = { refundStatus: state, ...(refund.id && { refundId: refund.id }), refundLastError: '' }
-  if (state === 'completed') Object.assign(update, { status: 'refunded', refundCompletedAt: new Date(), paymentIssue: null })
+  if (state === 'completed') return finishRefund(order, refund.id, state)
   await Order.updateOne({ _id: order._id }, { $set: update })
   return true
 }
 
-module.exports = { processFullRefund, reconcileRefund, applyProviderRefund }
+module.exports = { processFullRefund, reconcileRefund, applyProviderRefund, finishRefund }

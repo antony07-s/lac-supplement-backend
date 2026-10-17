@@ -15,7 +15,7 @@ router.get('/', protect, async (req, res) => {
       return { ...product, variantId: variant?._id, packSize: variant?.packSize, sku: variant?.sku, image: variant?.image || product.image, price: sellable.price, originalPrice: sellable.originalPrice, stock: sellable.stock, isAvailable: variant ? variant.isAvailable : true, quantity: item.quantity }
     }) : [])
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to load your cart.' })
   }
 })
 
@@ -25,11 +25,16 @@ router.put('/', protect, async (req, res) => {
     if (!Array.isArray(items)) {
       return res.status(400).json({ message: 'items must be an array' })
     }
-    const formattedItems = []
-    for (const item of items.slice(0, 50)) {
+    const validItems = items.slice(0, 50).filter((item) => {
       const quantity = Number(item.quantity)
-      if (!mongoose.isValidObjectId(item.productId) || (item.variantId && !mongoose.isValidObjectId(item.variantId)) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) continue
-      const product = await Product.findById(item.productId).select('variants stock')
+      return mongoose.isValidObjectId(item.productId) && (!item.variantId || mongoose.isValidObjectId(item.variantId)) && Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= 100
+    })
+    const products = await Product.find({ _id: { $in: [...new Set(validItems.map((item) => String(item.productId)))] } }).select('variants stock')
+    const productsById = new Map(products.map((product) => [String(product._id), product]))
+    const formattedItems = []
+    for (const item of validItems) {
+      const quantity = Number(item.quantity)
+      const product = productsById.get(String(item.productId))
       if (!product) continue
       const variant = item.variantId ? product.variants.id(item.variantId) : null
       if (item.variantId && (!variant || !variant.isAvailable || variant.stock < quantity)) continue
@@ -50,7 +55,7 @@ router.put('/', protect, async (req, res) => {
       return { ...product, variantId: variant?._id, packSize: variant?.packSize, sku: variant?.sku, image: variant?.image || product.image, price: sellable.price, originalPrice: sellable.originalPrice, stock: sellable.stock, isAvailable: variant ? variant.isAvailable : true, quantity: item.quantity }
     }))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to save your cart.' })
   }
 })
 

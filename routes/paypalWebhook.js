@@ -4,7 +4,7 @@ const Order = require('../models/Order')
 const { PAYPAL_BASE, getPayPalAccessToken, settlePayPalCapture } = require('../utils/paypal')
 const { moneyToSen } = require('../utils/checkout')
 const { claimPaymentEvent, completePaymentEvent, failPaymentEvent } = require('../utils/paymentEvents')
-const { reconcileRefund } = require('../utils/refunds')
+const { reconcileRefund, finishRefund } = require('../utils/refunds')
 
 // Reconciliation for captures that succeed at PayPal but whose browser loses
 // the response. PayPal's signature is verified before any database update.
@@ -34,9 +34,15 @@ router.post('/', express.json({ limit: '100kb' }), async (req, res) => {
       const order = await Order.findOne({ paypalOrderId })
       if (order && capture.id) await settlePayPalCapture(order, capture.id)
     } else if (req.body.event_type === 'PAYMENT.CAPTURE.REFUNDED') {
-      const captureId = req.body.resource?.id
-      const relatedOrderId = req.body.resource?.supplementary_data?.related_ids?.order_id
-      const order = await Order.findOne({ $or: [{ paypalCaptureId: captureId }, { paypalOrderId: relatedOrderId }] })
+      const resource = req.body.resource || {}
+      const relatedIds = resource.supplementary_data?.related_ids || {}
+      const relatedOrderId = relatedIds.order_id
+      const hintedCaptureId = relatedIds.capture_id || resource.capture_id
+      let order = relatedOrderId ? await Order.findOne({ paypalOrderId: relatedOrderId }) : null
+      if (!order && hintedCaptureId) order = await Order.findOne({ paypalCaptureId: hintedCaptureId })
+      if (!order && resource.id) order = await Order.findOne({ refundId: resource.id, paymentProvider: 'paypal' })
+      if (!order && resource.id) order = await Order.findOne({ paypalCaptureId: resource.id })
+      const captureId = order?.paypalCaptureId || hintedCaptureId || (order && resource.id === order.paypalCaptureId ? resource.id : null)
       if (order && captureId) {
         const accessToken = await getPayPalAccessToken()
         const captureResponse = await fetch(`${PAYPAL_BASE}/v2/payments/captures/${encodeURIComponent(captureId)}`, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -47,7 +53,7 @@ router.post('/', express.json({ limit: '100kb' }), async (req, res) => {
           && capture.amount?.currency_code === 'MYR' && moneyToSen(capture.amount.value) === moneyToSen(order.totalAmount)
           && refunded?.currency_code === 'MYR' && moneyToSen(refunded.value) === moneyToSen(order.totalAmount)
         if (fullyRefunded) {
-          await Order.updateOne({ _id: order._id }, { $set: { paypalCaptureId: captureId, status: 'refunded', refundStatus: 'completed', refundCompletedAt: new Date(), refundLastError: '', paymentIssue: null } })
+          await finishRefund(order, resource.id !== captureId ? resource.id : order.refundId, 'completed')
         } else if (moneyToSen(refunded?.value || 0) > 0) {
           await Order.updateOne({ _id: order._id }, { $set: { paypalCaptureId: captureId, refundStatus: 'reconciliation-required', paymentIssue: 'refund_reconciliation' } })
         } else if (['pending', 'reconciliation-required'].includes(order.refundStatus)) {

@@ -121,7 +121,12 @@ router.post('/', protect, async (req, res) => {
   } catch (err) {
     if (err.code === 11000) {
       const existing = await Order.findOne({ clientRequestId })
-      if (existing) return res.status(200).json(existing)
+      if (existing) {
+        if (String(existing.user) !== req.userId) {
+          return res.status(409).json({ message: 'This checkout request conflicts with an existing order' })
+        }
+        return res.status(200).json(existing)
+      }
     }
     res.status(err.status || 400).json({ message: err.status ? err.message : 'Unable to place order' })
   } finally {
@@ -169,7 +174,7 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
       const claimed = await Order.findOneAndUpdate(
         { _id: order._id, status: 'pending', paypalCreateRequestId: { $exists: false }, paymentProvider: { $in: [null, 'paypal'] } },
         { $set: { paypalCreateRequestId: randomUUID(), paymentProvider: 'paypal' } },
-        { new: true },
+        { returnDocument: 'after' },
       )
       const current = claimed || await Order.findById(order._id)
       if (!current || current.status !== 'pending') return res.status(409).json({ message: 'This order can no longer be paid' })
@@ -209,7 +214,7 @@ router.post('/:id/paypal-order', protect, async (req, res) => {
     const attached = await Order.findOneAndUpdate(
       { _id: order._id, status: 'pending', paypalCreateRequestId: requestId, paymentProvider: 'paypal' },
       { $set: { paypalOrderId: ppData.id, paymentProvider: 'paypal' }, $unset: { paypalCreateRequestId: 1 } },
-      { new: true },
+      { returnDocument: 'after' },
     )
     if (!attached) return res.status(409).json({ message: 'This order was cancelled while payment setup was finishing. No payment was started.' })
     res.json({ orderId: ppData.id })
@@ -246,7 +251,7 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     const claimed = await Order.findOneAndUpdate(
       { _id: order._id, status: 'pending', stockReserved: true, paymentProcessing: { $ne: true }, paypalOrderId },
       { $set: { paymentProcessing: true, paymentProcessingSince: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     )
     if (!claimed) return res.status(409).json({ message: 'Payment is already being confirmed or this order can no longer be paid.' })
     lockClaimed = true
@@ -342,7 +347,7 @@ router.get('/user/:userId', protect, async (req, res) => {
     const orders = await Order.find({ user: req.params.userId }).sort({ createdAt: -1 }).lean()
     res.json(orders)
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to load your orders.' })
   }
 })
 
@@ -379,7 +384,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
     res.set('X-Page-Size', String(limit))
     res.json(orders)
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to load orders.' })
   }
 })
 
@@ -419,7 +424,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
           updated = await Order.findOneAndUpdate(
             { _id: current._id, status: current.status },
             { $set: { status, statusNote: note } },
-            { new: true, session },
+            { returnDocument: 'after', session },
           )
           if (!updated) throw Object.assign(new Error('Order status changed; reload and try again'), { status: 409 })
           if (status === 'cancelled') await releaseOrderStock(updated, session)
@@ -473,7 +478,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
         .catch((err) => console.error('Delivered notification error:', err.message))
     }
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to update order status.' })
   }
 })
 

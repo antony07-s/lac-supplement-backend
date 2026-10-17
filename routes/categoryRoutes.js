@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
       return true
     }))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to load categories.' })
   }
 })
 
@@ -32,7 +32,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
 
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const updated = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true })
+    const updated = await Category.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' })
     if (!updated) {
       return res.status(404).json({ message: 'Category not found' })
     }
@@ -50,7 +50,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     }
     res.json({ message: 'Category deleted' })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to save category.' })
   }
 })
 

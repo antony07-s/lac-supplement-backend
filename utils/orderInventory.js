@@ -5,8 +5,7 @@ const { getProviderPaymentState } = require('./providerPayments')
 
 const DEFAULT_EXPIRY_MINUTES = 30
 
-async function releaseOrderStock(order, session) {
-  if (!order.stockReserved) return false
+async function restoreOrderItems(order, session) {
   const productIds = [...new Set(order.items.map((item) => String(item.product)))]
   const products = await Product.find({ _id: { $in: productIds } }).session(session)
   const productsById = new Map(products.map((product) => [String(product._id), product]))
@@ -20,6 +19,11 @@ async function releaseOrderStock(order, session) {
     changed.add(product)
   }
   for (const product of changed) await product.save({ session })
+}
+
+async function releaseOrderStock(order, session) {
+  if (!order.stockReserved) return false
+  await restoreOrderItems(order, session)
   order.stockReserved = false
   await order.save({ session })
   return true
@@ -35,7 +39,7 @@ async function cancelPendingOrder(orderId, { before, note, userId } = {}) {
       if (userId) filter.user = userId
       const order = await Order.findOneAndUpdate(filter, {
         $set: { status: 'cancelled', statusNote: note || 'Payment was not completed before the reservation expired.' },
-      }, { new: true, session })
+      }, { returnDocument: 'after', session })
       if (!order) return
       // Restore inventory in the same transaction as the conditional state change.
       await releaseOrderStock(order, session)
@@ -88,4 +92,4 @@ async function expirePendingOrders() {
   return expired
 }
 
-module.exports = { releaseOrderStock, cancelPendingOrder, expirePendingOrders }
+module.exports = { releaseOrderStock, restoreOrderItems, cancelPendingOrder, expirePendingOrders }

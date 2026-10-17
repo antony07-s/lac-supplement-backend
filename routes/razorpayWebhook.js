@@ -4,7 +4,7 @@ const { verifyWebhookSignature, settleRazorpayPayment, getRazorpay, CURRENCY } =
 const { moneyToSen } = require('../utils/checkout')
 const Order = require('../models/Order')
 const { claimPaymentEvent, completePaymentEvent, failPaymentEvent } = require('../utils/paymentEvents')
-const { applyProviderRefund } = require('../utils/refunds')
+const { applyProviderRefund, finishRefund } = require('../utils/refunds')
 
 // Backup confirmation for buyers who pay but close the tab before the browser
 // calls /razorpay-verify. express.raw keeps the exact bytes Razorpay signed.
@@ -44,7 +44,7 @@ router.post('/', express.raw({ type: 'application/json', limit: '100kb' }), asyn
         const fullyRefunded = payment.status === 'refunded' && payment.refund_status === 'full'
           && payment.order_id === order.razorpayOrderId && payment.currency === CURRENCY
           && Number(payment.amount) === moneyToSen(order.totalAmount) && Number(payment.amount_refunded) === moneyToSen(order.totalAmount)
-        if (fullyRefunded) await Order.updateOne({ _id: order._id }, { $set: { status: 'refunded', refundStatus: 'completed', refundCompletedAt: new Date(), refundLastError: '', paymentIssue: null } })
+        if (fullyRefunded) await finishRefund(order, order.refundId, 'completed')
         else await Order.updateOne({ _id: order._id }, { $set: { refundStatus: 'reconciliation-required', paymentIssue: 'refund_reconciliation' } })
       }
     } else if (event.event === 'refund.processed' || event.event === 'refund.failed') {

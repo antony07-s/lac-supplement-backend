@@ -8,7 +8,7 @@ router.get('/', async (req, res) => {
     const testimonials = await Testimonial.find()
     res.json(testimonials)
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to load testimonials.' })
   }
 })
 
@@ -24,7 +24,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
 
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const updated = await Testimonial.findByIdAndUpdate(req.params.id, req.body, { new: true })
+    const updated = await Testimonial.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' })
     if (!updated) {
       return res.status(404).json({ message: 'Testimonial not found' })
     }
@@ -42,7 +42,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     }
     res.json({ message: 'Testimonial deleted' })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({ message: 'Unable to save testimonial.' })
   }
 })
 

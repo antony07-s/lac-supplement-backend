@@ -7,6 +7,7 @@ const crypto = require('crypto')
 const https = require('https')
 const User = require('../models/User')
 const RegistrationOtp = require('../models/RegistrationOtp')
+const { protect } = require('../middleware/authMiddleware')
 const { sendNotification, verificationEmailHtml } = require('../config/mailer')
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -19,15 +20,35 @@ const isStrongPassword = (password) => password.length >= 8
   && /[^A-Za-z0-9]/.test(password)
 const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean))
 const createToken = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
-const userResponse = (user) => ({ id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin })
+const userResponse = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  isAdmin: Boolean(user.isAdmin && (!adminEmails.size || adminEmails.has(String(user.email || '').trim().toLowerCase()))),
+})
+const adminAllowlistConfigured = adminEmails.size > 0
+const cookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  path: '/api',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+})
+const setSessionCookie = (res, token) => res.cookie('ayusydah_session', token, cookieOptions())
+const clearSessionCookie = (res) => res.clearCookie('ayusydah_session', {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  path: '/api',
+})
 const otpHash = (code) => crypto.createHash('sha256').update(code).digest('hex')
 const registrationOtpLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification codes requested. Please try again in 15 minutes.' } })
 const registrationVerifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification attempts. Please request a new code later.' } })
 let googleKeys = null
 let googleKeysExpiresAt = 0
 
-function getGoogleKeys() {
-  if (googleKeys && Date.now() < googleKeysExpiresAt) return Promise.resolve(googleKeys)
+function getGoogleKeys(forceRefresh = false) {
+  if (!forceRefresh && googleKeys && Date.now() < googleKeysExpiresAt) return Promise.resolve(googleKeys)
   return new Promise((resolve, reject) => {
     https.get('https://www.googleapis.com/oauth2/v3/certs', (response) => {
       let body = ''
@@ -36,7 +57,8 @@ function getGoogleKeys() {
         try {
           if (response.statusCode !== 200) throw new Error('Unable to retrieve Google signing keys')
           googleKeys = JSON.parse(body).keys || []
-          googleKeysExpiresAt = Date.now() + 60 * 60 * 1000
+          const maxAge = Number(response.headers['cache-control']?.match(/max-age=(\d+)/i)?.[1])
+          googleKeysExpiresAt = Date.now() + Math.max(60, Math.min(Number.isFinite(maxAge) ? maxAge : 3600, 24 * 60 * 60)) * 1000
           resolve(googleKeys)
         } catch (error) { reject(error) }
       })
@@ -50,7 +72,12 @@ async function verifyGoogleCredential(credential) {
   const header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'))
   const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'))
   if (header.alg !== 'RS256' || !header.kid) throw new Error('Invalid Google credential')
-  const key = (await getGoogleKeys()).find((candidate) => candidate.kid === header.kid)
+  let keys = await getGoogleKeys()
+  let key = keys.find((candidate) => candidate.kid === header.kid)
+  if (!key) {
+    keys = await getGoogleKeys(true)
+    key = keys.find((candidate) => candidate.kid === header.kid)
+  }
   if (!key || !crypto.verify('RSA-SHA256', Buffer.from(`${encodedHeader}.${encodedPayload}`), crypto.createPublicKey({ key, format: 'jwk' }), Buffer.from(encodedSignature, 'base64url'))) throw new Error('Invalid Google credential')
   const now = Math.floor(Date.now() / 1000)
   if (payload.aud !== process.env.GOOGLE_CLIENT_ID || payload.exp <= now || payload.iat > now + 60 || !['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)) throw new Error('Invalid Google credential')
@@ -58,15 +85,32 @@ async function verifyGoogleCredential(credential) {
 }
 
 async function applyAdminRole(user) {
+  if (!adminAllowlistConfigured) return user
   const normalizedEmail = String(user.email || '').trim().toLowerCase()
-  if (adminEmails.has(normalizedEmail) && !user.isAdmin) {
-    user.isAdmin = true
+  const shouldBeAdmin = adminEmails.has(normalizedEmail)
+  if (user.isAdmin !== shouldBeAdmin) {
+    user.isAdmin = shouldBeAdmin
     await user.save({ validateBeforeSave: false })
   }
   return user
 }
 
 // Email verification is required before a password account is created.
+router.get('/me', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select('name email isAdmin')
+    if (!user) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
+    res.json({ user: userResponse(user) })
+  } catch {
+    res.status(500).json({ message: 'Unable to load account.' })
+  }
+})
+
+router.post('/logout', (req, res) => {
+  clearSessionCookie(res)
+  res.json({ message: 'Signed out.' })
+})
+
 router.post('/register/request-otp', registrationOtpLimiter, async (req, res) => {
   const name = String(req.body.name || '').trim()
   const email = String(req.body.email || '').trim().toLowerCase()
@@ -103,7 +147,8 @@ router.post('/register/verify-otp', registrationVerifyLimiter, async (req, res) 
     if (await User.exists({ email })) return res.status(409).json({ message: 'Email already registered. Please sign in instead.' })
     const newUser = new User({ name: pending.name, email, password: pending.password, isAdmin: adminEmails.has(email) })
     await newUser.save(); await pending.deleteOne()
-    res.status(201).json({ token: createToken(newUser), user: userResponse(newUser) })
+    setSessionCookie(res, createToken(newUser))
+    res.status(201).json({ user: userResponse(newUser) })
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ message: 'Email already registered. Please sign in instead.' })
     res.status(500).json({ message: 'Unable to verify your email.' })
@@ -130,10 +175,8 @@ router.post('/login', async (req, res) => {
     await applyAdminRole(user)
     const token = createToken(user)
 
-    res.json({
-      token,
-      user: userResponse(user),
-    })
+    setSessionCookie(res, token)
+    res.json({ user: userResponse(user) })
   } catch (err) {
     res.status(500).json({ message: 'Unable to sign in' })
   }
@@ -163,7 +206,6 @@ router.post('/forgot-password', async (req, res) => {
         user.resetPasswordExpires = undefined
         await user.save({ validateBeforeSave: false })
         console.error('Password reset email failed:', error.message)
-        return res.status(503).json({ message: 'Password reset email is temporarily unavailable. Please try again later.' })
       }
     }
     res.json({ message: 'If an account exists for that email, a reset link has been sent.' })
@@ -193,7 +235,8 @@ router.post('/google', async (req, res) => {
     await applyAdminRole(user)
     await user.save()
 
-    res.json({ token: createToken(user), user: userResponse(user) })
+    setSessionCookie(res, createToken(user))
+    res.json({ user: userResponse(user) })
   } catch (err) {
     if (err?.code === 11000) return res.status(409).json({ message: 'This Google account is already linked to another user.' })
     return res.status(401).json({ message: 'Google sign-in failed. Please try again.' })

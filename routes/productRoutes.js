@@ -6,6 +6,7 @@ const { cloudinary, storage, videoStorage } = require('../config/cloudinary')
 const { protect, adminOnly } = require('../middleware/authMiddleware')
 const { canonicalCategory, categoryValues } = require('../config/categories')
 const isValidId = (id) => require('mongoose').isValidObjectId(id)
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const upload = multer({
   storage,
@@ -25,7 +26,9 @@ const videoUrl = (value) => {
   if (!url) return ''
   try {
     const parsed = new URL(url)
-    if (parsed.protocol !== 'https:') throw new Error('Only HTTPS video URLs are allowed')
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'res.cloudinary.com' || parsed.username || parsed.password) {
+      throw new Error('Product videos must use a secure Cloudinary URL')
+    }
     return parsed.href
   } catch {
     throw Object.assign(new Error('Invalid video URL'), { status: 400 })
@@ -109,7 +112,10 @@ router.get('/', async (req, res, next) => {
     if (req.query.bestSeller === 'true') query.bestSeller = true
     if (req.query.search) {
       const term = String(req.query.search).trim().slice(0, 100)
-      if (term) query.$or = [{ name: { $regex: term, $options: 'i' } }, { description: { $regex: term, $options: 'i' } }]
+      if (term) {
+        const safeTerm = escapeRegex(term)
+        query.$or = [{ name: { $regex: safeTerm, $options: 'i' } }, { description: { $regex: safeTerm, $options: 'i' } }]
+      }
     }
     const sortOptions = {
       catalog: { displayOrder: 1, createdAt: -1 },

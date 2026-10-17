@@ -1,6 +1,7 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const router = express.Router()
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const Review = require('../models/Review')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
@@ -83,7 +84,7 @@ router.get('/', protect, adminOnly, async (req, res, next) => {
     if (['pending', 'approved', 'rejected'].includes(req.query.status)) query.status = req.query.status
     const rating = Number(req.query.rating)
     if (Number.isInteger(rating) && rating >= 1 && rating <= 5) query.rating = rating
-    const search = String(req.query.search || '').trim().slice(0, 100)
+    const search = escapeRegex(String(req.query.search || '').trim().slice(0, 100))
     if (search) {
       const [products, users] = await Promise.all([
         Product.find({ name: { $regex: search, $options: 'i' } }).select('_id').lean(),
@@ -100,7 +101,7 @@ router.put('/:id/status', protect, adminOnly, async (req, res, next) => {
   if (!['pending', 'approved', 'rejected'].includes(req.body.status)) return res.status(400).json({ message: 'Invalid review status' })
   if (!isValidId(req.params.id)) return res.status(400).json({ message: 'Invalid review ID' })
   try {
-    const review = await Review.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true })
+    const review = await Review.findByIdAndUpdate(req.params.id, { status: req.body.status }, { returnDocument: 'after' })
     if (!review) return res.status(404).json({ message: 'Review not found' })
     await refreshProductRating(review.product); res.json(review)
   } catch (err) { next(err) }

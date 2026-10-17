@@ -64,7 +64,7 @@ async function settleRazorpayPayment(payment) {
   const updated = await Order.findOneAndUpdate(
     { _id: order._id, status: 'pending', stockReserved: true },
     { $set: { status: 'paid', razorpayPaymentId: payment.id, paymentProvider: 'razorpay', paymentProcessing: false, paymentProcessingSince: null } },
-    { new: true },
+    { returnDocument: 'after' },
   )
 
   if (!updated) {

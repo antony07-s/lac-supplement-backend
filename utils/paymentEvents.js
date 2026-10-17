@@ -18,7 +18,7 @@ async function claimPaymentEvent(provider, eventId, eventType) {
   const event = await PaymentEvent.findOneAndUpdate(
     { provider, eventId: String(eventId), $or: [{ status: 'failed' }, { status: 'processing', updatedAt: { $lte: staleBefore } }] },
     { $set: { status: 'processing', eventType: String(eventType || 'unknown'), lastError: '' }, $inc: { attempts: 1 } },
-    { new: true },
+    { returnDocument: 'after' },
   )
   if (event) return { event, claimed: true, duplicate: false }
   return { event: await PaymentEvent.findOne({ provider, eventId: String(eventId) }), claimed: false, duplicate: true }

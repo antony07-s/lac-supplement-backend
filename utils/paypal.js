@@ -65,7 +65,7 @@ async function settlePayPalCapture(order, captureId) {
   const paid = await Order.findOneAndUpdate(
     { _id: order._id, paypalOrderId: order.paypalOrderId, status: 'pending', stockReserved: true },
     { $set: { status: 'paid', paypalCaptureId: capture.id, paymentProvider: 'paypal', paymentProcessing: false, paymentProcessingSince: null } },
-    { new: true },
+    { returnDocument: 'after' },
   )
   if (paid) {
     User.findById(paid.user).select('email').lean()
