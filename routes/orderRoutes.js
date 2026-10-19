@@ -265,9 +265,21 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     if (!detailsRes.ok) return res.status(502).json({ message: 'Unable to verify the PayPal payment. Please try again.' })
     const details = await detailsRes.json()
     const unit = details.purchase_units?.[0]
-    if (details.status !== 'APPROVED' || unit?.reference_id !== String(order._id) || unit?.amount?.currency_code !== 'MYR' || moneyToSen(unit?.amount?.value) !== moneyToSen(order.totalAmount)) {
+    if (unit?.reference_id !== String(order._id) || unit?.amount?.currency_code !== 'MYR' || moneyToSen(unit?.amount?.value) !== moneyToSen(order.totalAmount)) {
       return res.status(409).json({ message: 'PayPal payment details do not match this order' })
     }
+
+    // A prior capture may have succeeded even if its HTTP response was lost.
+    // Re-verify that existing capture server-side instead of issuing another.
+    if (details.status === 'COMPLETED') {
+      const completedCapture = unit.payments?.captures?.find((candidate) => candidate.status === 'COMPLETED')
+      if (!completedCapture?.id) return res.status(409).json({ message: 'PayPal has not confirmed a completed payment for this order.' })
+      const verified = await settlePayPalCapture(order, completedCapture.id)
+      if (!verified.ok) return res.status(409).json({ message: verified.reason === 'late-capture' ? 'Payment completed after this order changed. Support has been alerted to reconcile it.' : 'PayPal has not confirmed a completed payment for this order.' })
+      lockClaimed = false
+      return res.json({ status: verified.order.status, paypal: details.status })
+    }
+    if (details.status !== 'APPROVED') return res.status(409).json({ message: 'PayPal payment is not approved yet. Please retry checkout.' })
 
     const captureRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${paypalOrderId}/capture`, {
       method: 'POST',
