@@ -104,3 +104,25 @@ test('deleted session user receives the standard AUTH_REQUIRED response', async 
   assert.equal(res.statusCode, 401)
   assert.equal(res.body.code, 'AUTH_REQUIRED')
 })
+
+test('duplicate session cookies use the newest valid login instead of the first stale cookie', async () => {
+  const { protect } = loadMiddleware('')
+  const olderToken = jwt.sign({ id: 'older-user', iat: 100 }, process.env.JWT_SECRET)
+  const newerToken = jwt.sign({ id: 'newer-admin', iat: 200 }, process.env.JWT_SECRET)
+  const lookups = []
+  userModel.findById = (id) => {
+    lookups.push(id)
+    return { select: () => ({ lean: async () => ({ _id: id, email: `${id}@example.com` }) }) }
+  }
+  const req = {
+    method: 'GET',
+    headers: { cookie: `ayusydah_session=${olderToken}; ayusydah_session=${newerToken}` },
+    get: () => undefined,
+  }
+  const res = responseMock()
+
+  await protect(req, res, () => {})
+
+  assert.equal(req.userId, 'newer-admin')
+  assert.deepEqual(lookups, ['newer-admin'])
+})

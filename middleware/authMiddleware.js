@@ -13,10 +13,13 @@ const trustedOrigins = new Set([
   'http://localhost:4173',
 ])
 
-function readSessionCookie(req) {
-  const cookie = String(req.headers.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith(`${sessionCookieName}=`))
-  if (!cookie) return ''
-  try { return decodeURIComponent(cookie.slice(sessionCookieName.length + 1)) } catch { return '' }
+function readSessionCookies(req) {
+  return String(req.headers.cookie || '').split(';').map((part) => part.trim())
+    .filter((part) => part.startsWith(`${sessionCookieName}=`))
+    .map((cookie) => {
+      try { return decodeURIComponent(cookie.slice(sessionCookieName.length + 1)) } catch { return '' }
+    })
+    .filter(Boolean)
 }
 
 async function protect(req, res, next) {
@@ -25,8 +28,8 @@ async function protect(req, res, next) {
   const authHeader = req.headers.authorization
 
   const hasBearerToken = Boolean(authHeader?.startsWith('Bearer '))
-  const token = hasBearerToken ? authHeader.split(' ')[1] : readSessionCookie(req)
-  if (!token) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
+  const tokens = hasBearerToken ? [authHeader.split(' ')[1]] : readSessionCookies(req)
+  if (!tokens.some(Boolean)) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
 
   if (!hasBearerToken && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     const origin = String(req.get('Origin') || '').replace(/\/$/, '')
@@ -34,7 +37,13 @@ async function protect(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
+    // Older deployments may have left a root-path cookie beside the current
+    // /api cookie. Verify all candidates and use the most recently issued one
+    // so a stale session cannot mask the account the customer just signed in as.
+    const decoded = tokens.map((token) => {
+      try { return jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }) } catch { return null }
+    }).filter(Boolean).sort((left, right) => (right.iat || 0) - (left.iat || 0))[0]
+    if (!decoded) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
     const user = await User.findById(decoded.id).select('email').lean()
     if (!user) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
     req.userId = String(user._id)

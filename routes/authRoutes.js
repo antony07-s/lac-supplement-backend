@@ -27,22 +27,26 @@ const userResponse = (user) => ({
   isAdmin: Boolean(user.isAdmin && (!adminEmails.size || adminEmails.has(String(user.email || '').trim().toLowerCase()))),
 })
 const adminAllowlistConfigured = adminEmails.size > 0
-const cookieOptions = () => ({
+const cookieBaseOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   partitioned: process.env.NODE_ENV === 'production',
+})
+const cookieOptions = () => ({
+  ...cookieBaseOptions(),
   path: '/api',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 })
-const setSessionCookie = (res, token) => res.cookie('ayusydah_session', token, cookieOptions())
-const clearSessionCookie = (res) => res.clearCookie('ayusydah_session', {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  partitioned: process.env.NODE_ENV === 'production',
-  path: '/api',
-})
+const setSessionCookie = (res, token) => {
+  // Remove a legacy root-path session before issuing the current /api cookie.
+  res.clearCookie('ayusydah_session', { ...cookieBaseOptions(), path: '/' })
+  return res.cookie('ayusydah_session', token, cookieOptions())
+}
+const clearSessionCookie = (res) => {
+  res.clearCookie('ayusydah_session', { ...cookieBaseOptions(), path: '/api' })
+  res.clearCookie('ayusydah_session', { ...cookieBaseOptions(), path: '/' })
+}
 const otpHash = (code) => crypto.createHash('sha256').update(code).digest('hex')
 const registrationOtpLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification codes requested. Please try again in 15 minutes.' } })
 const registrationVerifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { message: 'Too many verification attempts. Please request a new code later.' } })
