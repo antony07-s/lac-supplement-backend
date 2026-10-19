@@ -102,6 +102,7 @@ router.get('/me', protect, async (req, res) => {
   try {
     const user = await User.findById(req.userId).select('name email isAdmin')
     if (!user) return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' })
+    await applyAdminRole(user)
     res.json({ user: userResponse(user) })
   } catch {
     res.status(500).json({ message: 'Unable to load account.' })

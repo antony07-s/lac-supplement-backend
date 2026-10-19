@@ -25,6 +25,7 @@ function responseMock() {
   return {
     statusCode: 200,
     body: null,
+    set() { return this },
     status(code) { this.statusCode = code; return this },
     json(body) { this.body = body; return this },
   }
@@ -63,6 +64,12 @@ test('configured admin allowlist rejects admins whose email is not listed', asyn
 
   assert.equal(res.statusCode, 403)
   assert.equal(res.body.message, 'Admin access required')
+})
+
+test('shared admin check rejects removed admins from order-level access too', () => {
+  const { isAdminUser } = loadMiddleware('owner@example.com')
+  assert.equal(isAdminUser({ email: 'admin@example.com', isAdmin: true }), false)
+  assert.equal(isAdminUser({ email: ' OWNER@example.com ', isAdmin: true }), true)
 })
 
 test('cookie-authenticated writes reject missing and untrusted origins', async () => {

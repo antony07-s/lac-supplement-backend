@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { evaluateCapture, canCancelOrder } = require('../utils/paymentState')
-const { classifyRazorpayPayments, classifyPayPalOrderStatus, classifyPayPalOrder, getProviderPaymentState } = require('../utils/providerPayments')
+const { classifyRazorpayPayments, classifyPayPalOrderStatus, classifyPayPalOrder, canAbandonPayPalOrder, getProviderPaymentState } = require('../utils/providerPayments')
 
 const pendingOrder = () => ({ _id: 'order-local', status: 'pending', stockReserved: true, razorpayPaymentId: null, paypalCaptureId: null })
 const capturedRazorpay = () => ({ id: 'pay_local', status: 'captured', currency: 'MYR', amount: 12500 })
@@ -39,6 +39,16 @@ test('cancellation is allowed only for pending orders with verified unpaid or fa
   assert.equal(canCancelOrder({ status: 'pending', providerState: 'unknown' }), false)
   assert.equal(canCancelOrder({ status: 'paid', providerState: 'unpaid' }), false)
   assert.equal(canCancelOrder({ status: 'pending', paymentProcessing: true, providerState: 'unpaid' }), false)
+})
+
+test('PayPal approval can be abandoned before capture, but pending or completed captures cannot', () => {
+  assert.equal(canAbandonPayPalOrder({ status: 'CREATED' }), true)
+  assert.equal(canAbandonPayPalOrder({ status: 'VOIDED' }), true)
+  assert.equal(canAbandonPayPalOrder({ status: 'APPROVED' }), true)
+  assert.equal(canAbandonPayPalOrder({ status: 'PAYER_ACTION_REQUIRED' }), true)
+  assert.equal(canAbandonPayPalOrder({ status: 'COMPLETED' }), false)
+  assert.equal(canAbandonPayPalOrder({ status: 'APPROVED', purchase_units: [{ payments: { captures: [{ status: 'PENDING' }] } }] }), false)
+  assert.equal(canAbandonPayPalOrder({ status: 'APPROVED', purchase_units: [{ payments: { captures: [{ status: 'COMPLETED' }] } }] }), false)
 })
 
 test('provider status snapshots distinguish in-flight from failed payment attempts', () => {

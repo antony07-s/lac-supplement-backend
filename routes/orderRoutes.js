@@ -5,12 +5,12 @@ const { randomUUID } = require('crypto')
 const Order = require('../models/Order')
 const Product = require('../models/Product')
 const User = require('../models/User')
-const { protect, adminOnly } = require('../middleware/authMiddleware')
+const { protect, adminOnly, isAdminUser } = require('../middleware/authMiddleware')
 const { PAYPAL_BASE, getPayPalAccessToken, settlePayPalCapture } = require('../utils/paypal')
 const { calculateCheckout, moneyToSen } = require('../utils/checkout')
 const { sendOrderShippedEmail, sendOrderDeliveredEmail } = require('../utils/notify')
 const { releaseOrderStock, cancelPendingOrder } = require('../utils/orderInventory')
-const { getProviderPaymentState, canCancelOrder } = require('../utils/providerPayments')
+const { getProviderPaymentState, canCancelOrder, canAbandonPayPalOrder } = require('../utils/providerPayments')
 const { processFullRefund, reconcileRefund } = require('../utils/refunds')
 
 async function recordShipmentEmail(order) {
@@ -324,7 +324,10 @@ router.post('/:id/cancel-payment', protect, async (req, res) => {
       }
       return res.status(409).json({ message: 'The provider confirms payment for this order. Reload your order status.' })
     }
-    if (!canCancelOrder({ status: current.status, paymentProcessing: current.paymentProcessing, providerState: providerState.state }) && providerState.state !== 'captured') {
+    const canAbandonPayPalApproval = providerState.provider === 'paypal'
+      && canAbandonPayPalOrder(providerState.remoteOrder)
+    if (!canCancelOrder({ status: current.status, paymentProcessing: current.paymentProcessing, providerState: providerState.state })
+      && !canAbandonPayPalApproval && providerState.state !== 'captured') {
       return res.status(409).json({ message: 'The payment provider has not confirmed that this payment is safe to cancel. Please wait and check again.' })
     }
     const cancelled = await cancelPendingOrder(req.params.id, { userId: req.userId, note: 'Payment was cancelled by the customer.' })
@@ -360,8 +363,8 @@ router.get('/:id', protect, async (req, res) => {
     const order = await Order.findById(req.params.id).lean()
     if (!order) return res.status(404).json({ message: 'Order not found' })
     if (String(order.user) !== req.userId) {
-      const requester = await User.findById(req.userId).select('isAdmin').lean()
-      if (!requester?.isAdmin) return res.status(403).json({ message: 'Not authorized to view this order' })
+      const requester = await User.findById(req.userId).select('email isAdmin').lean()
+      if (!isAdminUser(requester)) return res.status(403).json({ message: 'Not authorized to view this order' })
     }
     res.json(order)
   } catch (err) {

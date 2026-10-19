@@ -20,6 +20,8 @@ function readSessionCookie(req) {
 }
 
 async function protect(req, res, next) {
+  // Session scoped data must never be reused by a browser or intermediary cache.
+  res.set('Cache-Control', 'private, no-store')
   const authHeader = req.headers.authorization
 
   const hasBearerToken = Boolean(authHeader?.startsWith('Bearer '))
@@ -46,8 +48,7 @@ async function protect(req, res, next) {
 async function adminOnly(req, res, next) {
   try {
     const user = await User.findById(req.userId)
-    const allowlisted = !adminAllowlistConfigured || adminEmails.has(String(user?.email || '').toLowerCase())
-    if (!user || !user.isAdmin || !allowlisted) {
+    if (!isAdminUser(user)) {
       return res.status(403).json({ message: 'Admin access required' })
     }
     next()
@@ -56,4 +57,9 @@ async function adminOnly(req, res, next) {
   }
 }
 
-module.exports = { protect, adminOnly }
+function isAdminUser(user) {
+  const allowlisted = !adminAllowlistConfigured || adminEmails.has(String(user?.email || '').trim().toLowerCase())
+  return Boolean(user?.isAdmin && allowlisted)
+}
+
+module.exports = { protect, adminOnly, isAdminUser }

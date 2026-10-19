@@ -29,6 +29,15 @@ function classifyPayPalOrder(remoteOrder) {
   return 'unknown'
 }
 
+// An approved PayPal Orders v2 order using intent=CAPTURE has not charged the
+// buyer yet. It can be abandoned when the internal pending-order transition
+// wins the race against the capture route. Pending/completed captures cannot.
+function canAbandonPayPalOrder(remoteOrder) {
+  if (!['CREATED', 'VOIDED', 'APPROVED', 'PAYER_ACTION_REQUIRED'].includes(remoteOrder?.status)) return false
+  const captures = remoteOrder.purchase_units?.flatMap((unit) => unit.payments?.captures || []) || []
+  return !captures.some((capture) => ['PENDING', 'COMPLETED'].includes(capture.status))
+}
+
 async function getProviderPaymentState(order) {
   if (order.paymentProvider === 'razorpay' && order.razorpayOrderId) {
     const gateway = getRazorpay()
@@ -52,4 +61,4 @@ async function getProviderPaymentState(order) {
   return { provider: order.paymentProvider || null, state: 'unpaid' }
 }
 
-module.exports = { classifyRazorpayPayments, classifyPayPalOrderStatus, classifyPayPalOrder, getProviderPaymentState, canCancelOrder }
+module.exports = { classifyRazorpayPayments, classifyPayPalOrderStatus, classifyPayPalOrder, canAbandonPayPalOrder, getProviderPaymentState, canCancelOrder }
