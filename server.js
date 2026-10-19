@@ -31,6 +31,8 @@ const app = express()
 
 if (!process.env.CONTACT_RECIPIENT?.trim()) console.warn('CONTACT_RECIPIENT is not configured; contact form submissions will be rejected.')
 if (!process.env.EMAIL_FROM?.trim()) console.warn('EMAIL_FROM is not configured; email delivery is unavailable.')
+if (!process.env.RESEND_API_KEY) console.warn('RESEND_API_KEY is not configured; email delivery is unavailable.')
+if (process.env.EMAIL_FROM?.trim()) console.warn('Confirm the EMAIL_FROM domain is verified in Resend before relying on email delivery.')
 
 const configuredOrigins = String(process.env.CLIENT_ORIGINS || '')
   .split(',')

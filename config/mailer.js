@@ -152,25 +152,45 @@ async function sendNotification({ subject, text, html, replyTo, to }) {
     .map((email) => email.trim())
     .filter(Boolean)
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: sender,
-      to: recipient,
-      subject,
-      text,
-      html,
-      reply_to: replyTo,
-    }),
-  })
+  let response
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        from: sender,
+        to: recipient,
+        subject,
+        text,
+        html,
+        reply_to: replyTo,
+      }),
+    })
+  } catch (cause) {
+    console.error('Resend email request failed:', { status: null, name: cause?.name || 'NetworkError' })
+    const error = new Error('Email delivery failed')
+    error.code = 'EMAIL_DELIVERY_FAILED'
+    throw error
+  }
 
   if (!response.ok) {
-    const errorBody = await response.text()
-    throw new Error(`Resend API error: ${response.status} ${errorBody}`)
+    let errorName = 'unknown_error'
+    try {
+      const errorBody = await response.json()
+      if (typeof errorBody?.name === 'string' && /^[a-z0-9_-]{1,80}$/i.test(errorBody.name)) errorName = errorBody.name
+    } catch {
+      // Keep provider response details out of logs and user-facing errors.
+    }
+    console.error('Resend email request failed:', { status: response.status, name: errorName })
+    const error = new Error('Email delivery failed')
+    error.code = 'EMAIL_DELIVERY_FAILED'
+    error.status = response.status
+    error.providerErrorName = errorName
+    throw error
   }
 
   return response.json()

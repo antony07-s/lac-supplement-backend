@@ -19,16 +19,21 @@ router.post('/', contactLimiter, async (req, res) => {
     const fingerprint = crypto.createHash('sha256').update(`${email}\n${subject}\n${message}`).digest('hex')
     const duplicateSince = new Date(Date.now() - 5 * 60 * 1000)
     const duplicate = await Message.exists({ fingerprint, createdAt: { $gte: duplicateSince } })
-    if (duplicate) return res.status(409).json({ message: 'This enquiry was already sent. We will get back to you shortly.' })
+    if (duplicate) return res.status(409).json({ message: 'This enquiry was already received. If you need a response, please contact us directly.' })
 
     const saved = await Message.create({ name, email, subject, message, fingerprint })
 
-    void sendNotification({
-      replyTo: email,
-      subject: `New contact form message: ${subject || 'No subject'}`,
-      text: `From: ${name} (${email})\n\n${message}`,
-      html: contactAdminAlertHtml(name, email, subject, message),
-    }).catch((error) => console.error('Contact notification failed:', error.message))
+    try {
+      await sendNotification({
+        replyTo: email,
+        subject: `New contact form message: ${subject}`,
+        text: `From: ${name} (${email})\n\n${message}`,
+        html: contactAdminAlertHtml(name, email, subject, message),
+      })
+    } catch (error) {
+      console.error('Contact notification failed:', error.message)
+      return res.status(502).json({ message: 'Your enquiry was saved, but we could not notify our team by email. Please contact us directly.' })
+    }
 
     void sendNotification({
       to: email,
@@ -37,7 +42,7 @@ router.post('/', contactLimiter, async (req, res) => {
       html: contactThankYouHtml(name, subject),
     }).catch((error) => console.error('Contact thank-you email failed:', error.message))
 
-    res.status(201).json({ message: 'Message sent', id: saved._id })
+    res.status(201).json({ message: 'Your enquiry was received and our team was notified.', id: saved._id })
   } catch (err) {
     console.error('Contact submission failed:', err.message)
     res.status(500).json({ message: 'Unable to save your enquiry' })
