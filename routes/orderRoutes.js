@@ -265,9 +265,6 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     if (!detailsRes.ok) return res.status(502).json({ message: 'Unable to verify the PayPal payment. Please try again.' })
     const details = await detailsRes.json()
     const unit = details.purchase_units?.[0]
-    if (unit?.reference_id !== String(order._id) || unit?.amount?.currency_code !== 'MYR' || moneyToSen(unit?.amount?.value) !== moneyToSen(order.totalAmount)) {
-      return res.status(409).json({ message: 'PayPal payment details do not match this order' })
-    }
 
     // A prior capture may have succeeded even if its HTTP response was lost.
     // Re-verify that existing capture server-side instead of issuing another.
@@ -279,7 +276,12 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
       lockClaimed = false
       return res.json({ status: verified.order.status, paypal: details.status })
     }
-    if (details.status !== 'APPROVED') return res.status(409).json({ message: 'PayPal payment is not approved yet. Please retry checkout.' })
+    if (details.status !== 'APPROVED') {
+      return res.status(409).json({ message: 'PayPal payment is not approved yet. Please finish approval in the PayPal window, then try again.' })
+    }
+    if (unit?.reference_id !== String(order._id) || unit?.amount?.currency_code !== 'MYR' || moneyToSen(unit?.amount?.value) !== moneyToSen(order.totalAmount)) {
+      return res.status(409).json({ message: 'PayPal payment amount, currency, or order reference does not match this order.' })
+    }
 
     const captureRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${paypalOrderId}/capture`, {
       method: 'POST',
@@ -290,7 +292,21 @@ router.post('/:id/paypal-capture', protect, async (req, res) => {
     })
 
     if (!captureRes.ok) {
-      console.error('PayPal capture failed:', captureRes.status)
+      let captureError = {}
+      try {
+        captureError = await captureRes.json()
+      } catch {
+        // The provider may return an empty or non-JSON error response.
+      }
+      const rawIssue = captureError?.details?.[0]?.issue
+      const issue = typeof rawIssue === 'string' && /^[A-Z_]+$/.test(rawIssue) ? rawIssue : 'UNKNOWN'
+      console.error(`PayPal capture failed: HTTP ${captureRes.status}; issue ${issue}`)
+      const customerMessages = {
+        ORDER_NOT_APPROVED: 'PayPal approval has not completed. Please finish approval in the PayPal window, then try again.',
+        INSTRUMENT_DECLINED: 'PayPal declined that payment method. Choose another method or try a different card or PayPal account.',
+        PAYER_ACTION_REQUIRED: 'PayPal needs you to complete another step. Finish it in the PayPal window, then try again.',
+      }
+      if (customerMessages[issue]) return res.status(409).json({ message: customerMessages[issue] })
       return res.status(500).json({ message: 'Payment could not be completed. Please try again.' })
     }
 
